@@ -1,1 +1,1 @@
-# aludra
+This is a prototype of SAR workflow code called `aludra` that aims to replace the overly-complex [py_gamma_workflow](https://github.com/geoscienceAustralia/ga_sar_workflow) with something much simpler.
