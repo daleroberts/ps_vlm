@@ -1,0 +1,31 @@
+#!bash
+#PBS -P dg9 -q normalsl -l walltime=48:00:00,mem=190GB,ncpus=32,jobfs=400GB -l wd
+#PBS -l storage=scratch/dg9+gdata/v10+gdata/dg9+gdata/up71+gdata/fj7+gdata/dz56
+set -e
+
+source /g/data/dg9/env
+
+echo "MATLABPATH=$MATLABPATH"
+echo "mt_prep_gamma=$(which mt_prep_gamma)"
+echo "calamp=$(which calamp)"
+
+master=$(ls -1 ../diff0 | head -1 | sed -e 's/\_.*//g')
+echo "master: $master"
+
+mt_prep_gamma ${master} $(cd ..; pwd) 0.4 1 1
+
+module load matlab/R2021b matlab_licence/anu
+
+matlab -nojvm -nosplash -nodisplay < $STAMPS/matlab/ps_parms_initial.m > ps_parms_initial.log
+
+matlab -nosplash -nodisplay <<EOF
+addpath /home/251/dxr251/gamma;
+stamps(1,1);
+getparm();
+setparm('unwrap_gold_n_win', 8);
+setparm('scla_deramp', 'y');
+stamps(2,8);
+quit;
+EOF
+
+module unload matlab/R2021b matlab_licence/anu
