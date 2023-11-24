@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""
+Calculate the bounding box of polygons in a GeoJSON file.
+"""
+
+import argparse
+import sys
+
+from osgeo import ogr
+
+ogr.UseExceptions()
+
+def calc_bbox(geojson: str, buffer_pct: float) -> str:
+    ds = ogr.Open(geojson)
+    layer = ds.GetLayer()
+    layer_extent = layer.GetExtent()
+
+    # Create a polygon from the layer extent
+    ring = ogr.Geometry(ogr.wkbLinearRing)
+    ring.AddPoint(layer_extent[0], layer_extent[2])
+    ring.AddPoint(layer_extent[1], layer_extent[2])
+    ring.AddPoint(layer_extent[1], layer_extent[3])
+    ring.AddPoint(layer_extent[0], layer_extent[3])
+    ring.AddPoint(layer_extent[0], layer_extent[2])
+    poly = ogr.Geometry(ogr.wkbPolygon)
+    poly.AddGeometry(ring)
+
+    # Buffer the polygon by the specified percentage
+    width = layer_extent[1] - layer_extent[0]
+    height = layer_extent[3] - layer_extent[2]
+    buffer_distance = max(width, height) * (buffer_pct / 100.0)
+    buffered_poly = poly.Buffer(buffer_distance)
+    buffered_extent = buffered_poly.GetEnvelope()
+
+    # Return as minX, minY, maxX, maxY
+    return f"{buffered_extent[0]} {buffered_extent[2]} {buffered_extent[1]} {buffered_extent[3]}"
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("geojson", type=str, help="Path to the GeoJSON file")
+    parser.add_argument("-b", "--buffer", type=float, default=0.0, help="Buffer percentage to increase the bounding box size")
+    args = parser.parse_args()
+
+    try:
+        bbox = calc_bbox(args.geojson, args.buffer)
+        print(bbox)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+
