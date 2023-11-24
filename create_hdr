@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""
+Create an ENVI header file from a SAR image parameter file or a DEM parameter
+file. The ENVI header file is written to the current working directory.
+"""
+
+import subprocess
+import argparse
+import re
+
+from pathlib import Path
+from enum import Enum
+
+class ParType(Enum):
+    IMAGE = 0
+    DEM = 1
+
+def X(cmd):
+    subprocess.run(cmd, shell=True)
+
+def parse_params(path):
+    par = {}
+    with open(path) as fd:
+        for line in fd.readlines():
+            try:
+                key, value = re.split(r":\s+", line.strip())
+                par[key] = value
+            except ValueError:
+                pass
+    return par
+
+def parfile_type(path):
+    with open(path) as fd:
+        head = fd.readline()
+        if "Image Parameter File" in head:
+            return ParType.IMAGE
+        elif "MAP parameter file" in head:
+            return ParType.DEM
+
+def from_image_par(path, nodata=0):
+    par = parse_params(path)
+    rgs = int(par['range_samples'])
+    azs = int(par['azimuth_lines'])
+    return (f"ncols {rgs}\n"
+            f"nrows {azs}\n"
+            f"nbits 32\n"
+            f"pixeltype float\n"
+            f"nodata_value {nodata}\n")
+
+def from_dem_par(path, nodata=0):
+    par = parse_params(path)
+    width = int(par['width'])
+    nlines = int(par['nlines'])
+    try:
+        ulxmap = par['corner_east'].split(" ")[0]
+        ulymap = par['corner_north'].split(" ")[0]
+        ydim = abs(float(par['post_north'].split(" ")[0]))
+        xdim = abs(float(par['post_east'].split(" ")[0]))
+    except KeyError:
+        ulxmap = par['corner_lon'].split(" ")[0]
+        ulymap = par['corner_lat'].split(" ")[0]
+        ydim = abs(float(par['post_lon'].split(" ")[0]))
+        xdim = abs(float(par['post_lat'].split(" ")[0]))
+    return (f"ncols {width}\n"
+            f"nrows {nlines}\n"
+            f"nbits 32\n"
+            f"pixeltype float\n"
+            f"ulxmap {ulxmap}\n"
+            f"ulymap {ulymap}\n"
+            f"xdim {xdim}\n"
+            f"ydim {ydim}\n"
+            f"nodata_value {nodata}\n")
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-srs", default="EPSG:32755")
+parser.add_argument("-nodata", default=0)
+parser.add_argument("-stem", default=None)
+parser.add_argument("parfile", type=Path)
+args = parser.parse_args()
+
+if args.stem:
+    stem = args.stem
+else:
+    stem = args.parfile.stem
+
+dst = Path(f"{stem}.hdr")
+prj = Path(f"{stem}.prj")
+
+match parfile_type(args.parfile):
+    case ParType.IMAGE:
+        result = from_image_par(args.parfile, nodata=args.nodata)
+    case ParType.DEM:
+        X(f"gdalsrsinfo --single-line -o wkt_esri {args.srs} > {prj}")
+        result = from_dem_par(args.parfile, nodata=args.nodata)
+
+with open(dst, "w") as fd:
+    fd.write(result)
+
