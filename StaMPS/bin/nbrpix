@@ -1,0 +1,30 @@
+#!/usr/bin/env/python3
+"""
+Add neighbors to a pixel file.
+"""
+
+import argparse
+
+from pathlib import Path
+
+directions = {
+        'ABOVE' : (1, 0),
+        'LEFT': (0, -1),
+        'RIGHT': (0, 1),
+        'BELOW': (-1, 0)
+}
+
+parser = argparse.ArgumentParser()
+parser.add_argument("pixelfile", type=Path)
+args = parser.parse_args()
+
+with open(args.pixelfile) as fd:
+    for line in fd:
+        s = line.split()
+        if len(s) == 3:
+            az, rg, name = int(s[0]), int(s[1]), s[2]
+        else:
+            az, rg, name = [int(x) for x in s], ""
+        print(f"{az} {rg} {name}")
+        for d, (i,j) in directions.items():
+            print(f"{az+i} {rg+j} {name}-{d}")

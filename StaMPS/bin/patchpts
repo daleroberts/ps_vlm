@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""
+Extract points from a patch.
+"""
+
+import numpy as np
+import warnings
+import argparse
+
+from pathlib import Path
+from contextlib import ExitStack
+
+np.set_printoptions(precision=4, suppress=True)
+warnings.filterwarnings("ignore")
+
+parser = argparse.ArgumentParser()
+parser.add_argument("pscands_ij", default="FULL/pscands.1.ij", nargs="?")
+args = parser.parse_args()
+
+azrgs = []
+with open(args.pscands_ij) as ifd:
+    for line in ifd.readlines():
+        sl = line.split(" ")
+        azrgs.append([int(sl[1]), int(sl[2])])
+azrgs = np.array(azrgs, dtype=np.int64)
+
+print(f"{azrgs.shape[0]} points total")
+print(f"az ∈ ({np.min(azrgs[:,0])}, {np.max(azrgs[:,0])})")
+print(f"rg ∈ ({np.min(azrgs[:,1])}, {np.max(azrgs[:,1])})")
+
+rootpath = Path(".")
+patchpaths = rootpath.glob("PATCH_*")
+
+for pd in sorted(patchpaths):
+    with ExitStack() as stack:
+        ifd = stack.enter_context(open(pd / "patch.in"))
+        ofd = stack.enter_context(open(f"pts_{str(pd)}.tsv", "w"))
+
+        rg_start = int(ifd.readline())
+        rg_end = int(ifd.readline())
+        az_start = int(ifd.readline())
+        az_end = int(ifd.readline())
+
+        print(str(pd))
+        print(f"rg_start = {rg_start}")
+        print(f"rg_end = {rg_end}")
+        print(f"az_start = {az_start}")
+        print(f"az_end = {az_end}")
+
+        npts = 0
+        for az, rg in azrgs:
+            if (rg_start <= rg <= rg_end) and (az_start <= az <= az_end):
+                ofd.write(f"{az}\t{rg}\n")
+                npts += 1
+
+        print(f"{npts} points in patch")
+

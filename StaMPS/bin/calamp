@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
+"""
+Calculate calibration factor for SLCs
+"""
 import numpy as np
 import argparse
+import sys
 
 parser = argparse.ArgumentParser()
 parser.add_argument( "parmfile_in", help="Text file with list of SLC file names")
@@ -25,14 +29,17 @@ with open(args.parmfile_in) as fd:
 
 with open(args.parmfile_out, "w") as fd:
     for fn in fns:
-        data = np.fromfile(fn, dtype=typestr)
-        data.shape = (-1, args.width)
+        try:
+            data = np.fromfile(fn, dtype=typestr)
+            data.shape = (-1, args.width)
 
-        amp = np.absolute(data)
-        amp[amp <= 0.001] = np.nan
+            amp = np.absolute(data)
+            amp[amp <= 0.001] = np.nan
 
-        calib_factor = np.nanmean(amp)
+            calib_factor = np.nanmean(amp)
 
-        fd.write(f"{fn} {calib_factor}\n")
+            fd.write(f"{fn} {calib_factor}\n")
 
-        print(f"{fn} {calib_factor}")
+            print(f"{fn} {calib_factor}")
+        except ValueError as e:
+            print(f"Error processing {fn}: {e}", file=sys.stderr)

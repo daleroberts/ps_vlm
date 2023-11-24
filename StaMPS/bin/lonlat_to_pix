@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+demfn=$(readlink -f ../prep/dem_WGS84.vrt)
+refpar=$(readlink -f $(cat rsc.txt))
+
+echo "demfn: $demfn"
+echo "refpar: $refpar"
+
+llfn=${1}
+azrgfn=${2}
+
+echo "cat ${llfn} | xargs -L 1 gdallocationinfo $demfn -wgs84 {} | grep Value | awk '{print $2}' > /tmp/dem"
+cat ${llfn} | xargs -L 1 gdallocationinfo $demfn -wgs84 | grep Value | awk '{print $2}' > /tmp/dem
+
+paste $llfn /tmp/dem > /tmp/lonlath
+
+cat /tmp/lonlath | awk '{print $2 " " $1 " " $3}' > /tmp/input_latlonh
+coord_to_sarpix_list $refpar - - /tmp/input_latlonh /tmp/azrg_coords
+cat /tmp/azrg_coords | awk '{printf("%d %d\n", $2+0.5, $1+0.5)}' > $azrgfn
+
+#rm -f /tmp/azrg_coords /tmp/lonlath /tmp/input_latlonh

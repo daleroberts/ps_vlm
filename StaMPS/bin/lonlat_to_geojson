@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+scrpath=$(dirname $0)
+tmp=$(mktemp -d /tmp/lonlat_to_geojson.XXXX)
+
+infile=${1}
+geofn=${2}
+
+cat > $tmp/lonlat.vrt << EOF
+<OGRVRTDataSource>
+    <OGRVRTLayer name="lonlat">
+        <SrcDataSource>$tmp/lonlat.csv</SrcDataSource>
+        <GeometryType>wkbPoint</GeometryType>
+        <LayerSRS>WGS84</LayerSRS>
+        <GeometryField encoding="PointFromColumns" x="Longitude" y="Latitude"/>
+    </OGRVRTLayer>
+</OGRVRTDataSource>
+EOF
+
+echo "Longitude,Latitude" > $tmp/lonlat.csv
+cat $infile | awk '{print $1","$2}' >> $tmp/lonlat.csv
+
+ogr2ogr -f GeoJSON $geofn $tmp/lonlat.vrt
+
+rm -fr $tmp
