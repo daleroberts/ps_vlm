@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""
+Workflow parameters.
+"""
+import sys
+
+from pathlib import Path
+from typing import List, Optional
+
+def export(var, value: str|int):
+    if isinstance(value, int):
+        print(f"export {var}={value}")
+        print(f"{var}={value}", file=sys.stderr)
+    else:
+        print(f"export {var}=\"{value}\"")
+        print(f"{var}=\"{value}\"", file=sys.stderr)
+
+def gen_export(var: str, default: str|int, index: Optional[int] = None, fn: Optional[str] = None, required=False) -> None:
+    if fn is None:
+        p = Path(f"{var}.txt")
+    else:
+        p = Path(f"{fn}.txt")
+    if p.exists():
+        if index is None:
+            export(var, p.read_text().strip())
+        else:
+            values: List[str] = p.read_text().strip().split()
+            value = values[index - 1] if index - 1 < len(values) else default
+            export(var, value)
+        return
+    if required:
+        print(f"ERROR: Workflow parameter {var} not set.", file=sys.stderr)
+        sys.exit(1)
+    export(var, default)
+
+def opt_export(var: str, default: str|int, index: Optional[int] = None, fn: Optional[str] = None) -> None:
+    gen_export(var, default, index, required=False)
+
+def req_export(var: str, index: Optional[int] = None, fn: Optional[str] = None) -> None:
+    gen_export(var, "", index, fn, required=True)
+
+
+cwd = Path.cwd()
+
+req_export('aoi')
+req_export('startdate', 1, 'daterange')
+req_export('enddate', 2, 'daterange')
+
+opt_export('opodspath', '/g/data/dg9/dxr251/OPODS')
+opt_export('dem', '/g/data/dg9/dxr251/copernicus-dem/dem-australia.tif')
+opt_export('passdir', 'Descending')
+opt_export('map_srs', 32755)
+opt_export('aoi_srs', 4326)
+opt_export('pol', 'vv')
+opt_export('azlks', 1)
+opt_export('rlks', 1)
+opt_export('cwd', str(cwd))
+opt_export('workdir', str(cwd / 'workdir'))
