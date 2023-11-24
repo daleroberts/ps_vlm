@@ -1,6 +1,6 @@
 #!bash
-#PBS -P dg9 -q normalsl -l walltime=48:00:00,mem=190GB,ncpus=32,jobfs=400GB -l wd
-#PBS -l storage=scratch/dg9+gdata/v10+gdata/dg9+gdata/up71+gdata/fj7+gdata/dz56
+#PBS -P dg9 -q normal -l walltime=48:00:00,mem=180GB,ncpus=48,jobfs=400GB -l wd
+#PBS -l storage=scratch/dg9+gdata/v10+gdata/dg9+gdata/up71+gdata/fj7
 set -e
 
 source /g/data/dg9/env
@@ -19,7 +19,7 @@ module load matlab/R2021b matlab_licence/anu
 matlab -nojvm -nosplash -nodisplay < $STAMPS/matlab/ps_parms_initial.m > ps_parms_initial.log
 
 matlab -nosplash -nodisplay <<EOF
-addpath /home/251/dxr251/gamma;
+addpath ~/aludra;
 stamps(1,1);
 getparm();
 setparm('unwrap_gold_n_win', 8);
