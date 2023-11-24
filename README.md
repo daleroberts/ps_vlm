@@ -26,7 +26,7 @@ Define a date range to consider in the file `daterange.txt`.
 ```bash
 echo "20190101 20230101" > daterange.txt
 ```
-Submit the job.
+Submit the job (where I have assumed that aludra is in your home directory).
 ```
 qsub ~/aludra/run_gamma_workflow
 ```
