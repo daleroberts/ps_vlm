@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+import numpy as np
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument( "parmfile_in", help="Text file with list of SLC file names")
+parser.add_argument("width", type=int, help="width of SLCs")
+parser.add_argument("parmfile_out", help="Output file to store file names and calibration constants", default="parmfile.out", nargs="?")
+parser.add_argument( "precision", help="Precision of data", choices=["s", "f"], default="f", nargs="?")
+parser.add_argument("byteswap", help="1 to swap bytes, 0 otherwise", choices=[0, 1], default=0, type=int, nargs="?")
+parser.add_argument("maskfile", help="Maskfile to mask rows and columns", default="", nargs="?")
+args = parser.parse_args()
+
+if args.precision == "s":
+    typestr = ">h"
+else:
+    typestr = ">c8"
+
+print(f"dtype: {typestr} ({np.dtype(typestr).kind} {np.dtype(typestr).itemsize * 8}-bit)")
+
+fns = []
+with open(args.parmfile_in) as fd:
+    for line in fd.readlines():
+        fns.append(line.strip())
+
+with open(args.parmfile_out, "w") as fd:
+    for fn in fns:
+        data = np.fromfile(fn, dtype=typestr)
+        data.shape = (-1, args.width)
+
+        amp = np.absolute(data)
+        amp[amp <= 0.001] = np.nan
+
+        calib_factor = np.nanmean(amp)
+
+        fd.write(f"{fn} {calib_factor}\n")
+
+        print(f"{fn} {calib_factor}")
