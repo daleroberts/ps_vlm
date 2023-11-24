@@ -30,3 +30,4 @@ Submit the job (where I have assumed that aludra is in your home directory).
 ```
 qsub ~/aludra/run_gamma_workflow
 ```
+This will generate SLCs, MLIs in radar coordinates, and inteferograms in radar coordinates.
