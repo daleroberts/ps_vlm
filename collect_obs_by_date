@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""
+Collects a list of files by date from a list of files.
+"""
+import argparse
+import re
+
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("fnslistfn", type=Path)
+parser.add_argument("--outpath", default=".", type=Path)
+parser.add_argument("--template", default="{date}.zip_files")
+args = parser.parse_args()
+
+with open(args.fnslistfn) as fd:
+    fns = [Path(el.strip()) for el in fd.readlines()]
+
+dates = list(set([re.split("[_T]", f.name)[5] for f in fns]))
+
+for date in sorted(dates):
+    outfn = args.template.format(date=date)
+    print(f"Creating {outfn}")
+    with open(outfn, "w") as fd:
+        for fn in fns:
+            if (date in str(fn)):
+                fd.write(f"{fn}\n")

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#PBS -P dg9 -q normal -l wd,walltime=24:00:00,mem=180GB,ncpus=48,storage=scratch/dg9+gdata/v10+gdata/dg9+gdata/up71+gdata/fj7
+set -e
+source /g/data/dg9/env
+eval $(workflow_params)
+
+find_obs -passdir $passdir -from ${startdate} -to ${enddate} -bbox $(echo $aoi) -out input_obs.geojson > input_obs
+collect_obs_by_date input_obs --template "{date}.zip_files"
+mosaic_aoi -aoi ${aoi} -must_contain -unique -opods ${opodspath} -pol ${pol} -twd $workdir -template "{date}.{pol}.SLC_tab" *.zip_files
+ls -1 $cwd/*.${pol}.SLC_tab | grep -v $master > $cwd/SLC_tab_list
+
+master=$(ls -1 *.SLC_tab | sort | head -1 | sed -e 's/^\([0-9]\{8\}\).*/\1/')
+multi_look_ScanSAR ${master}.${pol}.SLC_tab ${master}.mli ${master}.mli.par $rlks $azlks 1
+aoi=$(bbox -b 5 ${master}_aoi.geojson)
+[[ ! -r dem.tif ]] && gdalwarp -overwrite -te ${aoi} -te_srs "EPSG:${aoi_srs}" $dem dem.tif
+dem_import dem.tif dem_WGS84.bil dem_WGS84.dem_par 0 1
+create_dem_par dem_map.dem_par ${master}.mli.par 0 -25.0 25.0 ${map_srs} 0
+dem_trans dem_WGS84.dem_par dem_WGS84.bil dem_map.dem_par dem_map.bil - - 0 0 - 2
+geocoding.py ${master}.mli ${master}.mli.par dem_map.bil dem_map.dem_par ${master} --seg dem_seg_map
+
+ScanSAR_coreg_stack.py --npoly 3 --it1 3 --it2 3 $cwd/${master}.${pol}.SLC_tab $cwd/SLC_tab_list $cwd/${master}.hgt $rlks $azlks

@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""
+Find Sentinel-1 observations in a given time range and optionally
+within a given bounding box. We assume that the data is stored in
+the NCI's /g/data/fj7/Copernicus/Sentinel-1/C-SAR/SLC directory using 
+the Copernicus Hub naming convention.
+"""
+
+import threading
+import argparse
+import time
+import sys
+import re
+import os
+
+from concurrent.futures import ThreadPoolExecutor
+from typing import List, Tuple, Optional
+from functools import lru_cache
+from datetime import datetime
+from pathlib import Path
+from queue import Queue
+from osgeo import ogr
+
+RE_WKT = r'<ESA_TILEOUTLINE_FOOTPRINT_WKT>([^<]+)</ESA_TILEOUTLINE_FOOTPRINT_WKT>'
+RE_PASS = r"<PASS direction='(.*?)' />"
+
+BBox = Tuple[float, float, float, float]
+
+def log(s: str) -> None:
+    "Log a message to stderr."
+    print(s, file=sys.stderr)
+
+class ObservationFinder:
+
+    def __init__(self, root: str, start: datetime, end: datetime,
+                 bbox: Optional[BBox] = None, passdir: str = "Descending") -> None:
+
+        self.root = Path(root)
+        self.start = start
+        self.end = end
+        self.queue: Queue[Path] = Queue()
+        self.results: List[Tuple[Path, str, str]] = []
+        self.aoi_geom = None
+        self.big_geom = None
+        self.passdir = passdir
+
+        if bbox:
+            aoi_ring = ogr.Geometry(ogr.wkbLinearRing)
+            aoi_ring.AddPoint(bbox[0], bbox[1])
+            aoi_ring.AddPoint(bbox[2], bbox[1])
+            aoi_ring.AddPoint(bbox[2], bbox[3])
+            aoi_ring.AddPoint(bbox[0], bbox[3])
+            aoi_ring.CloseRings()
+
+            self.aoi_geom = ogr.Geometry(ogr.wkbPolygon)
+            self.aoi_geom.AddGeometry(aoi_ring)
+            self.aoi_geom.FlattenTo2D()
+ 
+            centroid = self.aoi_geom.Centroid()
+            cx, cy = centroid.GetX(), centroid.GetY()
+            big_ring = ogr.Geometry(ogr.wkbLinearRing)
+            big_ring.AddPoint(cx - 2.5, cy - 2.5)
+            big_ring.AddPoint(cx + 2.5, cy - 2.5)
+            big_ring.AddPoint(cx + 2.5, cy + 2.5)
+            big_ring.AddPoint(cx - 2.5, cy + 2.5)
+            big_ring.CloseRings()
+
+            self.big_geom = ogr.Geometry(ogr.wkbPolygon)
+            self.big_geom.AddGeometry(big_ring)
+            self.big_geom.FlattenTo2D()
+
+    def extract(self, file: Path) -> Tuple[None | str, None | str]:
+        "Extract WKT polygon and pass direction from an XML file."
+        wkt = None
+        passdir = None 
+        with open(file, 'r', encoding='utf-8') as f:
+            content = f.read()
+            match = re.search(RE_WKT, content)
+            if match:
+                wkt = match.group(1).strip()
+            match = re.search(RE_PASS, content)
+            if match:
+                passdir = match.group(1).strip()
+        return (wkt, passdir)
+
+    def process(self, path: Path) -> None:
+        "Process a potential XML file."
+        if path.name.endswith('.xml') and self.is_date_in_range(path.name):
+            obs_wkt, passdir = self.extract(path)
+            if obs_wkt and passdir:
+                obs_geom = ogr.CreateGeometryFromWkt(obs_wkt)
+                intersect = self.aoi_geom and self.aoi_geom.Intersect(obs_geom)
+                if not self.aoi_geom:
+                    intersect = True
+                if intersect and passdir == self.passdir:
+                    self.results.append((path, obs_wkt, passdir))
+                    log(f"({path}, {obs_wkt}, {passdir}) - Appended")
+                else:
+                    log(f"({path}, {passdir}, {intersect})")
+
+                #if self.aoi_geom and self.aoi_geom.Within(obs_geom) and (not self.passdir or passdir == self.passdir):
+                    #self.results.append((path, obs_wkt, passdir))
+
+    def in_range(self, year: str, month: str) -> bool:
+        "Check if a date is within the given range."
+        date = datetime(int(year), int(month), 1)
+        return self.start <= date <= self.end
+
+    def is_date_in_range(self, filename: str) -> bool:
+        "Check if the date in the filename is within the specified range."
+        match = re.search(r'_(\d{8})T', filename)
+        if match:
+            date_str = match.group(1)
+            file_date = datetime.strptime(date_str, "%Y%m%d")
+            return self.start <= file_date <= self.end
+        return False
+
+    def parse_lonlat(self, s:str) -> Tuple[float, float]:
+        "Parse strings in form 70S040E"
+        match = re.match(r"(\d+)([NS])(\d+)([EW])", s)
+        if match:
+            y, ns, x, ew = match.groups()
+            if ns == "S":
+                y = -float(y)
+            else:
+                y = float(y)
+            if ew == "W":
+                x = -float(x)
+            else:
+                x = float(x)
+            return x, y
+        else:
+            raise ValueError(f"Cannot parse {s}")
+    
+    def create_polygon(self, tl, br):
+        "Create a polygon from two lonlat points: top-left (tl) and bottom-right (br)."
+        ring = ogr.Geometry(ogr.wkbLinearRing)
+        ring.AddPoint(*tl)
+        ring.AddPoint(br[0], tl[1])
+        ring.AddPoint(*br)
+        ring.AddPoint(tl[0], br[1])
+        ring.CloseRings()
+        poly = ogr.Geometry(ogr.wkbPolygon)
+        poly.AddGeometry(ring)
+        poly.FlattenTo2D()
+        return poly
+
+    @lru_cache
+    def dir_intersects(self, dirname: str) -> bool:
+        "Determine if a directory intersects with the input bounding box."
+        if not self.big_geom:
+            return True
+        tl, br = dirname.split("-")
+        dir_geom = self.create_polygon(*map(self.parse_lonlat, (tl, br)))
+        return dir_geom.Intersect(self.big_geom) is True
+
+    def list(self, path: Path) -> None:
+        "List and process entries in a directory."
+        parts = path.parts
+        if len(parts) == 9 and parts[8].isdigit():
+            year = int(parts[8])
+            if self.start.year <= year <= self.end.year:
+                for entry in path.iterdir():
+                    if entry.is_dir():
+                        self.queue.put(entry)
+        elif len(parts) == 10 and self.in_range(*parts[9].split('-')):
+            for entry in path.iterdir():
+                if entry.is_dir():
+                    self.queue.put(entry)
+        elif (len(parts) > 10 and 
+              self.in_range(*parts[9].split('-')) and
+              parts[10] != "WV" and
+              self.dir_intersects(parts[10])):
+            for entry in path.iterdir():
+                if entry.is_file():
+                    self.process(entry)
+                elif entry.is_dir():
+                    self.queue.put(entry)
+
+    def work(self) -> None:
+        "Worker function to process directories."
+        while not self.queue.empty():
+            self.list(self.queue.get())
+            self.queue.task_done()
+
+    def find(self, threads: int) -> List[Tuple[Path, str, str]]:
+        "Start the search for XML files."
+
+        for entry in self.root.iterdir():
+            if entry.is_dir():
+                year = int(entry.parts[-1])
+                if self.start.year <= year <= self.end.year:
+                    self.queue.put(entry)
+
+        with ThreadPoolExecutor(threads) as executor:
+            executor.submit(self.work)
+            time.sleep(1)
+            for _ in range(threads-1):
+                if self.queue.qsize() > threads:
+                    executor.submit(self.work)
+
+        return [(fn.with_suffix(".zip"), wkt, passdir) for fn, wkt, pd in self.results]
+
+    def save_as_geojsonl(self, output_file: str) -> None:
+        "Save results as GeoJSONL."
+        driver = ogr.GetDriverByName('GeoJSONSeq')
+        if not driver:
+            raise Exception("GeoJSONSeq driver is not available")
+
+        ds = driver.CreateDataSource(output_file)
+        layer = ds.CreateLayer('', geom_type=ogr.wkbPolygon)
+
+        field_name = ogr.FieldDefn("Filename", ogr.OFTString)
+        layer.CreateField(field_name)
+
+        field_name = ogr.FieldDefn("Direction", ogr.OFTString)
+        layer.CreateField(field_name)
+
+        for file, wkt, passdir in self.results:
+            geom = ogr.CreateGeometryFromWkt(wkt)
+            feature = ogr.Feature(layer.GetLayerDefn())
+            feature.SetGeometry(geom)
+            feature.SetField("Filename", str(file))
+            feature.SetField("Direction", passdir)
+            layer.CreateFeature(feature)
+            feature.Destroy()
+
+        ds = None
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-from", dest="from_date", required=True)
+    parser.add_argument("-to", dest="to_date", required=True)
+    parser.add_argument("-passdir", default="Descending")
+    parser.add_argument("-bbox", nargs=4, type=float,
+                        metavar=("<xmin>", "<ymin>", "<xmax>", "<ymax>"))
+    parser.add_argument("-out", dest="output_file")
+    parser.add_argument("-root", type=Path, default=Path("/g/data/fj7/Copernicus/Sentinel-1/C-SAR/SLC"))
+    parser.add_argument("-workers", type=int, default=10)
+    args = parser.parse_args()
+
+    root = args.root
+    workers = int(os.getenv('PBS_NCPUS', args.workers))
+    start_date = datetime.strptime(args.from_date, "%Y%m%d")
+    end_date = datetime.strptime(args.to_date, "%Y%m%d")
+    bbox = (args.bbox[0], args.bbox[1], args.bbox[2], args.bbox[3]) if args.bbox else None
+    passdir = args.passdir
+
+    log(f"{start_date=}")
+    log(f"{end_date=}")
+    log(f"{passdir=}")
+    log(f"{bbox=}")
+    log(f"{root=}")
+    log(f"{workers=}")
+
+    try:
+        finder = ObservationFinder(root, start_date, end_date, bbox, passdir)
+        results = finder.find(workers)
+
+        if args.output_file:
+            finder.save_as_geojsonl(args.output_file)    
+
+        for fn, poly, passdir in results:
+            print(f"{fn}")
+
+        log(f"Found {len(results)} observations in /g/data/fj7")
+
+        if len(results) == 0:
+            sys.exit(1)
+
+    except KeyboardInterrupt:
+        log("Interrupted")
+        sys.exit(0)

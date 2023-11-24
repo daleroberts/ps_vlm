@@ -1,0 +1,478 @@
+#!/usr/bin/env python3
+"""
+Creates a SLC_tab file for a given AOI and a list of S1 zip files.
+
+It takes the following arguments:
+    - srs: the spatial reference system of the AOI
+    - aoifn: the filename of the AOI which will be stored as a GeoJSON, the default is 'aoi.geojson'
+    - aoi: the bounding box of the AOI in format (minX, minY, maxX, maxY)
+    - opods: the directory with OPOD state vector files
+    - outfn: the filename of the SLC_tab file default is 'SLC_tab'
+    - polarisation: the polarisation of the S1 data, default is 'vv'
+    - dtype: the data type of the S1 data, default is 0
+    - zipfiles: the list of S1 zip files
+
+If zipfiles is a single file with the extension '.zip_files' it is assumed to be a text file with 
+a list of S1 zip files. These files are read into the list zipfiles.
+
+It achieves this doing the following steps:
+    - Unzips the S1 zip files but excludes the tiff files
+    - Creates a GeoJSON file with the AOI
+    - Creates a GeoJSON file with the burst geometries intersecting with the AOI
+    - Creates a SLC_tab file for each zip file with the bursts intersecting with the AOI
+"""
+
+import subprocess
+import argparse
+import tempfile
+import sys
+import os
+import re
+
+from contextlib import ExitStack
+from shutil import rmtree, move
+from pathlib import Path
+from typing import Dict, List, Tuple, Union
+from osgeo import ogr, osr
+from math import sqrt
+
+ogr.UseExceptions()
+
+def log(msg):
+    """ Prints a message to stderr. """
+    print(msg, file=sys.stderr)
+
+def X(cmd, quiet=True):
+    """ Executes a shell command. """
+    if quiet:
+        cp = subprocess.run(cmd, shell=True, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    else:
+        print(f"# {cmd}")
+        cp = subprocess.run(cmd, shell=True)
+    if cp.returncode > 0:
+        print(f"# FAIL: {cmd}")
+        sys.exit(cp.returncode)
+
+def buffer_bbox(bbox: Tuple[float, float, float, float], buffer_percentage: float) -> Tuple[float, float, float, float]:
+    """ Returns a new bounding box buffered by a given percentage. """
+
+    minx, miny, maxx, maxy = bbox
+    ring = ogr.Geometry(ogr.wkbLinearRing)
+    ring.AddPoint(minx, miny)
+    ring.AddPoint(maxx, miny)
+    ring.AddPoint(maxx, maxy)
+    ring.AddPoint(minx, maxy)
+    ring.AddPoint(minx, miny)
+    
+    aoi = ogr.Geometry(ogr.wkbPolygon)
+    aoi.AddGeometry(ring)
+    aoi.FlattenTo2D()
+
+    # Calculate buffer distance based on area percentage
+    area = aoi.GetArea()
+    buffer_dist = sqrt(area * buffer_percentage / 100)
+
+    # Generate buffered polygon
+    buffered_aoi = aoi.Buffer(buffer_dist)
+    
+    # Get new bounding box
+    new_bbox = buffered_aoi.GetEnvelope()  # Returns tuple (minX, maxX, minY, maxY)
+
+    return new_bbox[0], new_bbox[2], new_bbox[1], new_bbox[3]
+
+def save_aoi_to_geojson(bbox, outfn):
+    """ Saves a bounding box as a GeoJSON file. """
+    minx, miny, maxx, maxy = bbox
+    ring = ogr.Geometry(ogr.wkbLinearRing)
+    ring.AddPoint(minx, miny)
+    ring.AddPoint(maxx, miny)
+    ring.AddPoint(maxx, maxy)
+    ring.AddPoint(minx, maxy)
+    ring.AddPoint(minx, miny)
+    aoi = ogr.Geometry(ogr.wkbPolygon)
+    aoi.AddGeometry(ring)
+    aoi.FlattenTo2D()
+
+    with open(outfn, "w") as fd:
+        fd.write(aoi.ExportToJson())
+
+def obs_burst_geometry(path:Path, i:int, pol:str="vv") -> Path:
+    """Creates a GeoJSON file with the burst geometries for a given observation and subswath. """
+
+    obstime = Path(path).name.split("_")[5]
+    annfn = next((path / "annotation").glob(f"s1?-iw{i}-slc-*.xml"))
+    calfn = next((path / "annotation/calibration").glob(f"calibration-s1?-iw{i}-slc-*.xml"))
+    nsefn = next((path / "annotation/calibration").glob(f"noise-s1?-iw{i}-slc-*.xml"))
+    parfn = path / f"{obstime}_iw{i}_{pol}.slc.par"
+    topfn = path / f"{obstime}_iw{i}_{pol}.slc.tops_par"
+    burfn = path / f"{obstime}_iw{i}_{pol}.geojson"
+    kmlfn = path / f"{obstime}_iw{i}_{pol}.kml"
+
+    X(f"par_S1_SLC - {annfn} {calfn} {nsefn} {parfn} - {topfn}")
+    X(f"ScanSAR_burst_corners {parfn} {topfn} {kmlfn}")
+
+    obsid =  path_to_key(path)
+
+    driver = ogr.GetDriverByName('GeoJSON')
+    out_ds = driver.CreateDataSource(str(burfn))
+    out_lyr = out_ds.CreateLayer('Bursts', geom_type=ogr.wkbMultiPolygon)
+
+    field_defn = ogr.FieldDefn("Name", ogr.OFTString)
+    out_lyr.CreateField(field_defn)
+
+    in_ds = ogr.Open(str(kmlfn))
+    in_lyr = in_ds.GetLayer('Bursts')
+    
+    sql = f"SELECT ST_Union(geometry), 'Time: {obsid} ' || Name as Name FROM Bursts GROUP BY Name"
+    union_lyr = in_ds.ExecuteSQL(sql, dialect='sqlite')
+    
+    for feat in union_lyr:
+        out_feat = ogr.Feature(out_lyr.GetLayerDefn())
+        out_feat.SetField("Name", feat.GetField("Name"))
+        out_feat.SetGeometry(feat.GetGeometryRef())
+        out_lyr.CreateFeature(out_feat)
+        out_feat = None
+    
+    in_ds.ReleaseResultSet(union_lyr)
+    out_ds = None
+    in_ds = None
+    
+    return burfn.absolute()
+
+def merge_bursts(srcs: list[Path], dst: Path) -> None:
+    """ Merges the burst geometries from multiple GeoJSON files into a single GeoJSON file. """
+    drv = ogr.GetDriverByName("GeoJSON")
+    
+    idx = 0
+    for fn in srcs:
+        in_ds = ogr.Open(str(fn))
+        in_lyr = in_ds.GetLayer()
+        
+        if not dst.exists():
+            out_ds = drv.CreateDataSource(str(dst))
+            out_lyr = out_ds.CreateLayer(in_lyr.GetName(), geom_type=in_lyr.GetGeomType())
+            out_lyr.CreateFields(in_lyr.schema)
+        else:
+            out_ds = ogr.Open(str(dst), update=1)
+            out_lyr = out_ds.GetLayer()
+        
+        for feat in in_lyr:
+            feat.SetFID(idx)
+            out_lyr.CreateFeature(feat)
+            idx += 1
+        
+        in_ds = None
+        out_ds = None
+
+def filter_by_aoi(allfn: Path, aoifn: Path, aoi: tuple, srs: str, must_contain:bool=False) -> None:
+    """ Creates a GeoJSON file with the burst geometries intersecting with the AOI. """
+    in_ds = ogr.Open(str(allfn))
+    in_lyr = in_ds.GetLayer()
+
+    out_srs = osr.SpatialReference()
+    out_srs.SetFromUserInput(srs)
+
+    drv = ogr.GetDriverByName("GeoJSON")
+    if drv is None:
+        raise RuntimeError("GeoJSON driver not available.")
+
+    out_ds = drv.CreateDataSource(str(aoifn))
+    out_lyr = out_ds.CreateLayer(in_lyr.GetName(), srs=out_srs, geom_type=in_lyr.GetGeomType())
+
+    out_lyr.CreateFields(in_lyr.schema)
+
+    min_x, min_y, max_x, max_y = aoi
+    aoi_poly = ogr.Geometry(ogr.wkbPolygon)
+
+    ring = ogr.Geometry(ogr.wkbLinearRing)
+    ring.AddPoint(min_x, min_y)
+    ring.AddPoint(max_x, min_y)
+    ring.AddPoint(max_x, max_y)
+    ring.AddPoint(min_x, max_y)
+    ring.AddPoint(min_x, min_y)
+
+    aoi_poly.AddGeometry(ring)
+
+    # Calculate the buffer distance as 1% of the smallest AOI dimension
+    buffer_distance = min(max_x - min_x, max_y - min_y) * -0.01
+    aoi_poly = aoi_poly.Buffer(buffer_distance)
+    
+    union_poly = ogr.Geometry(ogr.wkbMultiPolygon)
+    for feat in in_lyr:
+        geom = feat.GetGeometryRef()
+        if geom is not None:
+            union_poly = union_poly.Union(geom)
+
+    with open("union.geojsonl", "a") as fd:
+        fd.write(union_poly.ExportToJson())
+        fd.write("\n")
+
+    # Check if the AOI polygon contains the union of the polygons.
+    if must_contain and not union_poly.Contains(aoi_poly):
+        print("Warning: Bursts do not cover the AOI.")
+        # If not, discard all features by destroying the data source.
+        out_lyr = None
+        out_ds = None
+        return
+
+    # If it does, proceed to create features.
+    in_lyr.ResetReading()  # Reset the reading to iterate again for creating features
+    for feat in in_lyr:
+        if feat.GetGeometryRef().Intersects(aoi_poly):
+            out_lyr.CreateFeature(feat)
+    
+    # Clean up the data source to flush the data to disk
+    in_ds = None
+    if out_ds is not None:
+        out_ds = None
+
+def read_bursts(fn: Path) -> Dict[str, List[Tuple[str, int]]]:
+    """ Reads the burst geometries from a GeoJSON file. """
+    bursts: Dict[str, List[Tuple[str, int]]] = {}
+    vd = ogr.Open(str(fn))
+    layer = vd.GetLayer()
+    for f in layer:
+        row = f.GetField("Name").split(" ")
+        vv = bursts.setdefault(row[1], [])
+        vv.append((row[3], int(row[5])))
+    return bursts
+
+def path_to_key(path:Path) -> str:
+    """ Returns the observation key from a path. """
+    name = path.stem.split("_")
+    return f"{name[5]}_{name[9]}"
+
+def mk_burst_tab(bursts: Dict[str, List[Tuple[str, int]]], obsfn: Path, safe: Path, wd: Path) -> Path:
+    """ Creates a burst_tab file for a given observation. """
+    fullfn, zipfn = obsfn.resolve(), obsfn.name
+    k = path_to_key(obsfn)
+    burstfn = wd / f"burst_tab_{k}"
+
+    try:
+        with open(burstfn, "w") as fd:
+            fd.write(f"zipfile: {fullfn}\n")
+            subswaths = {v[0].lower() for v in bursts[k]}
+
+            for ss in sorted(subswaths):
+                tops_par = next(safe.glob(f"*{ss}*.tops_par"))
+                bs = [v[1] for v in bursts[k] if v[0].lower() == ss]
+                si, ei = max(1, min(bs) - 1), max(bs)
+                fd.write(f"{ss}_number_of_bursts: {ei - si + 1}\n")
+
+                with open(tops_par) as td:
+                    times = {
+                        el.split(":")[0]: re.split(r"\s+", el)[1]
+                        for el in td if el.startswith("burst_asc_node_")
+                    }
+
+                fd.write(f"{ss}_first_burst: {float(times[f'burst_asc_node_{si}']):.5f}\n")
+                fd.write(f"{ss}_last_burst: {float(times[f'burst_asc_node_{ei}']):.5f}\n")
+
+    except KeyError as e:
+        log(f"Error: {e} not found in {obsfn}")
+
+    return burstfn
+
+def burst_tabs_for_intersecting(zipfiles, aoi, srs, wd, must_contain=False):
+    """ Creates burst_tab files for the zipfiles intersecting with the AOI. """
+
+    cwd = Path(os.getcwd())
+    twd = Path(tempfile.mkdtemp(dir=wd))
+    
+    for fn in zipfiles:
+        X(f"unzip -qq {fn} -x '*.tiff' -d {twd}")
+    
+    safepaths = [next(twd.glob(p.name.replace(".zip", "*"))) for p in zipfiles]
+    log(f"{safepaths=}")
+    
+    uniquedates = set(p.name.split("_")[5].split("T")[0] for p in safepaths)
+    obstime = uniquedates.pop()
+    
+    if len(uniquedates) > 1:
+        log(f"Warning: {len(uniquedates)} dates found, using {obstime}")
+    
+    bfns = []
+    for path in safepaths:
+        bfns.extend([obs_burst_geometry(path, i) for i in [1, 2, 3]])
+    
+    allfn = cwd / f"{obstime}_all.geojson"
+    aoifn = cwd / f"{obstime}_aoi.geojson"
+
+    allfn.unlink(missing_ok=True)
+    aoifn.unlink(missing_ok=True)
+    
+    merge_bursts(bfns, allfn)
+    filter_by_aoi(allfn, aoifn, aoi, srs, must_contain)
+    bursts = read_bursts(aoifn)
+    nbursts = len(bursts)
+    
+    log(f"{nbursts=}")
+    log(f"{bursts=}")
+    
+    if nbursts == 0:
+        log(f"Warning: {nbursts} bursts intersecting with AOI for observations {[str(z) for z in zipfiles]}. Skipping...")
+        rmtree(twd)
+        return []
+    
+    tabs = []
+    for obsfn,safe in zip(zipfiles, safepaths):
+        tabs.append(mk_burst_tab(bursts, obsfn, safe, wd))
+    
+    log(f"Created {len(tabs)} burst_tab files: {tabs}")
+    
+    rmtree(twd)
+
+    return tabs
+    
+def extract_slcs(tabfile, burst_tabs, pol, dtype, opods, wd):
+    """ Extracts the SLCs for the burst_tab files. """
+
+    cwd = Path(os.getcwd())
+
+    if len(burst_tabs) == 0:
+        return
+
+    slctabs = []
+    for tabfn in burst_tabs:
+        twd = Path(tempfile.mkdtemp(dir=wd))
+        os.chdir(twd)
+        infile = twd / "infile"
+        with open(tabfn) as ifd, open(infile, "w") as ofd:
+            obsfn = Path(re.split(r"\s+", ifd.readline().strip())[1])
+            ofd.write(str(obsfn))
+        X(f"S1_import_SLC_from_zipfiles {infile} {tabfn} {pol} {dtype} 0 {opods}")
+        try:
+            slctab = next(twd.glob("*.SLC_tab"))
+            slctab = slctab.rename(slctab.parent / (str(obsfn.stem) + ".SLC_tab"))
+            slctabs.append(slctab)
+        except StopIteration:
+            pass
+    
+    slctabs = sorted(slctabs, key=lambda p: p.stem.split("_")[5])
+
+    os.chdir(cwd)
+
+    with ExitStack() as stack:
+        tts = stack.enter_context(open(tabfile, "w"))
+        fds = [stack.enter_context(open(f)) for f in slctabs]
+        for iw in ["iw1", "iw2", "iw3"]: # ensure it is in the correct order
+            for tab, fd in zip(slctabs, fds):
+                os.chdir(tab.parent)
+                ob = tab.stem
+                for line in fd.readlines():
+                    try:
+                        fns = [Path(f).resolve() for f in line.strip().split(" ")]
+                        if iw in line and len(fns) == 3:
+                            print(fns)
+                            fns = [f.rename(f.parent / f.name.replace(f.stem.split('.')[0], ob)) for f in fns]
+                            #cwdfns = [move(fn, cwd) for fn in fns]
+                            out = " ".join([str(f) for f in fns]) + "\n"
+                            tts.write(out)
+                    except FileNotFoundError:
+                        log(f"Warning: {line.strip()} not found, skipping...")
+                        pass
+                fd.seek(0)
+
+    os.chdir(cwd)
+
+    # if size of tabfile is zero, delete file
+    if tabfile.exists() and os.stat(tabfile).st_size == 0:
+        tabfile.unlink()
+
+def select_tabs(burst_tabs, unique=False):
+    """ Selects the burst_tab files to be used for the mosaic. """
+
+    if unique:
+        # Select the burst_tab files based on the unique datetimes.
+        # Take the first burst_tab file for each unique datetime.
+        tabs = []
+        for tabfn in burst_tabs:
+            obsfn = Path(re.split(r"\s+", open(tabfn).readline().strip())[1])
+            obstime = obsfn.stem.split("_")[5]
+            if not any(obstime in t.name for t in tabs):
+                print(obstime, tabfn)
+                tabs.append(tabfn)
+        return tabs
+
+    return burst_tabs
+ 
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-srs", default="EPSG:4326", metavar=('"EPSG:4326"'))
+    parser.add_argument("-aoifn", default=Path("aoi.geojson"), type=Path, metavar=('"aoi.geojson"'))
+    parser.add_argument("-aoi", nargs=4, metavar=("minX", "minY", "maxX", "maxY"), type=float, required=True)
+    parser.add_argument("-opods", default=Path("."), type=Path)
+    parser.add_argument("-template", type=str, metavar=("{date}.{pol}.SLC_tab"), default="{date}.{pol}.SLC_tab")
+    parser.add_argument("-pol", type=str, default="vv")
+    parser.add_argument("-dtype", type=int, default=0)
+    parser.add_argument("-twd", type=Path, default=Path("/tmp"))
+    parser.add_argument("-unique", action="store_true")
+    parser.add_argument("-must_contain", action="store_true")
+    parser.add_argument("zipfiles", nargs="+", type=Path)
+    args = parser.parse_args()
+    
+    srs = args.srs
+    aoifn = args.aoifn
+    aoi = buffer_bbox((args.aoi[0], args.aoi[1], args.aoi[2], args.aoi[3]), 0)
+    opods = args.opods.resolve()
+    pol = args.pol
+    dtype = args.dtype
+    wd = args.twd
+    unique = args.unique
+    must_contain = args.must_contain
+    zipfiles = list(args.zipfiles)
+    nzipfiles = len(zipfiles)
+    cwd = Path(os.getcwd())
+    
+    save_aoi_to_geojson(aoi, aoifn)
+
+    log(f"{srs=}")
+    log(f"{aoifn=}")
+    log(f"{aoi=}")
+    log(f"{opods=}")
+    log(f"{pol=}")
+    log(f"{dtype=}")
+    log(f"{wd=}")
+    log(f"{unique=}")
+    log(f"{must_contain=}")
+    log(f"{nzipfiles=}")
+
+    for zipfn in args.zipfiles:
+        os.chdir(cwd)
+        obsfns = []
+
+        if zipfn.suffix == ".zip_files":
+            print(f"Reading observations from {zipfn}...")
+            with open(zipfn) as fd:
+                for line in fd.readlines():
+                    obsfn = line.strip()
+                    print(f" {obsfn}")
+                    obsfns.append(Path(obsfn))
+
+            date = zipfn.stem
+            slctab = Path(args.template.format(date=date, pol=pol))
+
+            log(f"{zipfn=}")
+            log(f"{slctab=}")
+
+        else:
+            obsfns = zipfiles
+
+            date = zipfn.stem.split("_")[5]
+            slctab = Path(args.template.format(date=date, pol=pol))
+
+            log(f"{zipfn=}")
+            log(f"{slctab=}")
+            
+        burst_tabs = burst_tabs_for_intersecting(obsfns, aoi, srs, wd, must_contain)
+        burst_tabs = select_tabs(burst_tabs, unique=unique)
+        extract_slcs(slctab, burst_tabs, pol, dtype, opods, wd)
+
+        if zipfn.suffix != ".zip_files":
+            print("Finishing...")
+            break
+
+        print("Done.")
+
+if __name__ == "__main__":
+    main()
