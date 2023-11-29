@@ -132,30 +132,25 @@ try:
     
         bfns = {}
         for fn in fns:
-            log(f"{fn}")
-
             if fn.stem.startswith(".") or len(fn.stem) == 0:
-                log(f"Skipping...")
                 continue
 
             safepath = twd / (fn.stem + ".SAFE")
 
-            try:
-                pn = path_to_pathrow(fn)
+            pn = path_to_pathrow(fn)
 
-                if pn not in bfns:
-                    print(f"{pn}")
+            if pn not in bfns:
+                print(f"{pn}")
 
-                    bfns[pn] = []
+                bfns[pn] = []
 
-                    X(f"unzip -qq {fn} -x '*.tiff' -d {twd}")
+                X(f"unzip -qq {fn} -x '*.tiff' -d {twd}")
 
-                    bfns[pn].extend([obs_burst_geometry(safepath, i) for i in [1, 2, 3]])
+                bfns[pn].extend([obs_burst_geometry(safepath, i) for i in [1, 2, 3]])
     
-                    rmtree(safepath, ignore_errors=True)
-            except Exception as e:
-                print(f"Failed to process {fn}: {e}")
-                continue
+                rmtree(safepath, ignore_errors=True)
+            else:
+                log(f"Skip {fn}")
 
         allbfns = []
         for pn in bfns:
@@ -165,5 +160,5 @@ try:
     
 except KeyboardInterrupt:
     print("Interrupted by user")
-    rmtree(wd)
+    rmtree(wd, ignore_errors=True)
     sys.exit(1)
