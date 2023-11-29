@@ -43,6 +43,9 @@ def req_export(var: str, index: Optional[int] = None, fn: Optional[str] = None) 
 
 cwd = Path.cwd()
 
+workdir = cwd / 'workdir'
+workdir.mkdir(exist_ok=True)
+
 req_export('aoi')
 req_export('startdate', 1, 'daterange')
 req_export('enddate', 2, 'daterange')
@@ -56,4 +59,4 @@ opt_export('pol', 'vv')
 opt_export('azlks', 1)
 opt_export('rlks', 1)
 opt_export('cwd', str(cwd))
-opt_export('workdir', str(cwd / 'workdir'))
+opt_export('workdir', str(workdir))
