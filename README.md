@@ -26,10 +26,10 @@ This will create a path called `aludra` in your home directory with all the code
 
 ## Running the workflow
 
-Briefly, the minimal way to run this workflow over an area in Australia is to first create a working directory where the outputs will be generated.
+Briefly, the minimal way to run this workflow over an area in Australia is to first create a working directory where the outputs will be generated. You should probably do this under the `/g/data/dg9` directory, e.g.,
 ```bash
-mkdir prep
-cd prep
+mkdir -p /g/data/dg9/$USER/prep
+cd /g/data/dg9/$USER/prep
 ```
 Define an area of interest by specifying a bounding box in "minX minY maxX maxY" (W,S,E,N) format in the file `aoi.txt`.
 ```bash
@@ -43,4 +43,4 @@ Submit the job (where I have assumed that aludra is in your home directory).
 ```
 qsub ~/aludra/run_gamma_workflow
 ```
-This will generate SLCs, MLIs in radar coordinates, and inteferograms in radar coordinates.
+This will generate SLCs (`*.slc`), MLIs in radar coordinates (`*.mli`), and inteferograms (`*.diff`) in radar coordinates. It will also generate the DEM-related heights in radar coordinates. There will also be some images for quick visualisation of outputs (`*.bmp`).
