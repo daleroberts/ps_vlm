@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""
+Extracts the burst geometries from a set of Sentinel-1 SLC products.
+"""
+
+import subprocess
+import argparse
+import tempfile
+import sys
+import re
+import os
+
+from pathlib import Path
+from typing import Tuple
+from osgeo import ogr
+from shutil import rmtree
+
+ogr.UseExceptions()
+
+def log(s: str) -> None:
+    """Log a message to stderr."""
+    print(s, file=sys.stderr)
+
+def X(cmd, quiet=True):
+    """Executes a shell command."""
+    if quiet:
+        cp = subprocess.run(cmd, shell=True, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    else:
+        print(f"# {cmd}")
+        cp = subprocess.run(cmd, shell=True)
+    if cp.returncode > 0:
+        print(f"# FAIL: {cmd}")
+        sys.exit(cp.returncode)
+
+def path_to_pathrow(path:Path) -> Tuple[int, int]:
+    """Returns the S1 path number from a file path. """
+    name = path.stem.split("_")
+    orbit = int(name[-3])
+    hhmmss = int(name[5][9:11] + name[5][11:13] + name[5][13:15])
+    if name[0] == "S1A":
+        return (hhmmss, (orbit - 73) % 175 + 1)
+    else:
+        return (hhmmss, (orbit - 202) % 175 + 1)
+
+def path_to_key(path:Path) -> str:
+    """Returns the observation key from a path. """
+    name = path.stem.split("_")
+    return f"{name[5]}_{name[9]}"
+
+def obs_burst_geometry(path:Path, i:int, pol:str="vv") -> Path:
+    """Creates a GeoJSON file with the burst geometries for a given observation and subswath. """
+
+    obstime = Path(path).name.split("_")[5]
+    annfn = next((path / "annotation").glob(f"s1?-iw{i}-slc-*.xml"))
+    calfn = next((path / "annotation/calibration").glob(f"calibration-s1?-iw{i}-slc-*.xml"))
+    nsefn = next((path / "annotation/calibration").glob(f"noise-s1?-iw{i}-slc-*.xml"))
+    parfn = path / f"{obstime}_iw{i}_{pol}.slc.par"
+    topfn = path / f"{obstime}_iw{i}_{pol}.slc.tops_par"
+    kmlfn = path / f"{obstime}_iw{i}_{pol}.kml"
+
+    burfn = path.parent / f"{obstime}_iw{i}_{pol}.geojson"
+
+    X(f"par_S1_SLC - {annfn} {calfn} {nsefn} {parfn} - {topfn}")
+    X(f"ScanSAR_burst_corners {parfn} {topfn} {kmlfn}")
+
+    obsid =  path_to_key(path)
+
+    driver = ogr.GetDriverByName('GeoJSON')
+    out_ds = driver.CreateDataSource(str(burfn))
+    out_lyr = out_ds.CreateLayer('Bursts', geom_type=ogr.wkbMultiPolygon)
+
+    field_defn = ogr.FieldDefn("Name", ogr.OFTString)
+    out_lyr.CreateField(field_defn)
+
+    in_ds = ogr.Open(str(kmlfn))
+    in_lyr = in_ds.GetLayer('Bursts')
+    
+    sql = f"SELECT ST_Union(geometry), 'Time: {obsid} ' || Name as Name FROM Bursts GROUP BY Name"
+    union_lyr = in_ds.ExecuteSQL(sql, dialect='sqlite')
+    
+    for feat in union_lyr:
+        out_feat = ogr.Feature(out_lyr.GetLayerDefn())
+        out_feat.SetField("Name", feat.GetField("Name"))
+        out_feat.SetGeometry(feat.GetGeometryRef())
+        out_lyr.CreateFeature(out_feat)
+        out_feat = None
+    
+    in_ds.ReleaseResultSet(union_lyr)
+    out_ds = None
+    in_ds = None
+    
+    return burfn.absolute()
+
+def merge_bursts(srcs: list[Path], dst: Path) -> None:
+    """Merges the burst geometries from multiple GeoJSON files into a single GeoJSONSeq file."""
+    driver = ogr.GetDriverByName("GeoJSONSeq")
+    
+    idx = 0
+    for fn in srcs:
+        in_ds = ogr.Open(str(fn))
+        in_lyr = in_ds.GetLayer()
+        
+        if not dst.exists():
+            out_ds = driver.CreateDataSource(str(dst))
+            out_lyr = out_ds.CreateLayer(in_lyr.GetName(), geom_type=in_lyr.GetGeomType())
+            out_lyr.CreateFields(in_lyr.schema)
+        else:
+            out_ds = ogr.Open(str(dst), update=1)
+            out_lyr = out_ds.GetLayer()
+        
+        for feat in in_lyr:
+            feat.SetFID(idx)
+            out_lyr.CreateFeature(feat)
+            idx += 1
+        
+        in_ds = None
+        out_ds = None
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("fn_tab", type=Path)
+parser.add_argument("outfn", type=Path)
+args = parser.parse_args()
+
+try:
+
+    with tempfile.TemporaryDirectory() as wd:
+        twd = Path(wd)
+    
+        with open(args.fn_tab) as f:
+            fns = [Path(fn.strip().replace(".xml", ".zip")) for fn in f.readlines()]
+    
+        bfns = {}
+        for fn in fns:
+            log(f"{fn}")
+
+            if fn.stem.startswith(".") or len(fn.stem) == 0:
+                log(f"Skipping...")
+                continue
+
+            safepath = twd / (fn.stem + ".SAFE")
+
+            try:
+                pn = path_to_pathrow(fn)
+
+                if pn not in bfns:
+                    print(f"{pn}")
+
+                    bfns[pn] = []
+
+                    X(f"unzip -qq {fn} -x '*.tiff' -d {twd}")
+
+                    bfns[pn].extend([obs_burst_geometry(safepath, i) for i in [1, 2, 3]])
+    
+                    rmtree(safepath, ignore_errors=True)
+            except Exception as e:
+                print(f"Failed to process {fn}: {e}")
+                continue
+
+        allbfns = []
+        for pn in bfns:
+            allbfns.extend(bfns[pn])
+
+        merge_bursts(allbfns, args.outfn)
+    
+except KeyboardInterrupt:
+    print("Interrupted by user")
+    rmtree(wd)
+    sys.exit(1)
