@@ -7,9 +7,10 @@ eval $(workflow_params)
 find_obs -passdir $passdir -from ${startdate} -to ${enddate} -bbox $(echo $aoi) -out input_obs.geojson > input_obs
 collect_obs_by_date input_obs --template "{date}.zip_files"
 mosaic_aoi -aoi ${aoi} -must_contain -unique -opods ${opodspath} -pol ${pol} -twd $workdir -template "{date}.{pol}.SLC_tab" *.zip_files
-ls -1 $cwd/*.${pol}.SLC_tab | grep -v $master > $cwd/SLC_tab_list
 
 master=$(ls -1 *.SLC_tab | sort | head -1 | sed -e 's/^\([0-9]\{8\}\).*/\1/')
+ls -1 $cwd/*.${pol}.SLC_tab | grep -v $master > $cwd/SLC_tab_list
+
 multi_look_ScanSAR ${master}.${pol}.SLC_tab ${master}.mli ${master}.mli.par $rlks $azlks 1
 aoi=$(bbox -b 5 ${master}_aoi.geojson)
 [[ ! -r dem.tif ]] && gdalwarp -overwrite -te ${aoi} -te_srs "EPSG:${aoi_srs}" $dem dem.tif
