@@ -30,6 +30,7 @@ def gen_export(var: str, default: str|int, index: Optional[int] = None, fn: Opti
         return
     if required:
         print(f"ERROR: Workflow parameter {var} not set.", file=sys.stderr)
+        print(f"exit 1")
         sys.exit(1)
     export(var, default)
 
