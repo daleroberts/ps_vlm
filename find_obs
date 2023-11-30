@@ -225,6 +225,7 @@ if __name__ == "__main__":
     parser.add_argument("-to", dest="to_date", required=True)
     parser.add_argument("-passdir", default="Descending")
     group = parser.add_mutually_exclusive_group()
+    group.add_argument("-aoi", type=str)
     group.add_argument("-aoifile", type=Path)
     group.add_argument("-bbox", nargs=4, type=float, metavar=("<xmin>", "<ymin>", "<xmax>", "<ymax>"))
     parser.add_argument("-out", dest="output_file")
@@ -246,6 +247,8 @@ if __name__ == "__main__":
 
     if args.aoifile:
         aoi_geom = ogr.CreateGeometryFromJson(args.aoifile.read_text())
+    elif args.aoi:
+        aoi_geom = ogr.CreateGeometryFromJson(args.aoi)
     elif args.bbox:
         bbox = args.bbox
         log(f"{bbox=}")
