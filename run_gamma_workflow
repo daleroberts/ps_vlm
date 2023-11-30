@@ -3,6 +3,7 @@
 set -e
 source /g/data/dg9/env
 eval $(workflow_params)
+mkdir -p $workdir
 
 find_obs -passdir $passdir -from ${startdate} -to ${enddate} -bbox $(echo $aoi) -out input_obs.geojson > input_obs
 collect_obs_by_date input_obs --template "{date}.zip_files"
