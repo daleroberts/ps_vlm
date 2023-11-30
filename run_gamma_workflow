@@ -12,9 +12,9 @@ mosaic_aoi -aoi ${aoi} -must_contain -unique -opods ${opodspath} -pol ${pol} -tw
 master=$(ls -1 *.SLC_tab | sort | head -1 | sed -e 's/^\([0-9]\{8\}\).*/\1/')
 multi_look_ScanSAR ${master}.${pol}.SLC_tab ${master}.mli ${master}.mli.par $rlks $azlks 1
 [[ ! -r dem.tif ]] && gdalwarp -overwrite -te $(bbox -b 5 ${master}_aoi.geojson) -te_srs "EPSG:${aoi_srs}" $dem dem.tif
-dem_import dem.tif dem_WGS84.bil dem_WGS84.dem_par 0 1
+dem_import dem.tif dem.bil dem.dem_par 0 1
 create_dem_par dem_map.dem_par ${master}.mli.par 0 -25.0 25.0 ${map_srs} 0
-dem_trans dem_WGS84.dem_par dem_WGS84.bil dem_map.dem_par dem_map.bil - - 0 0 - 2
+dem_trans dem.dem_par dem.bil dem_map.dem_par dem_map.bil - - 0 0 - 2
 geocoding.py ${master}.mli ${master}.mli.par dem_map.bil dem_map.dem_par ${master} --seg dem_seg_map
 
 ls -1 $cwd/*.${pol}.SLC_tab | grep -v $master > $cwd/SLC_tab_list
