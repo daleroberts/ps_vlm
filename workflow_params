@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
 Workflow parameters.
+
+Default values set at bottom of this file after the helper code.
 """
 import sys
+import os
 
 from pathlib import Path
 from typing import List, Optional
@@ -15,7 +18,15 @@ def export(var, value: str|int):
         print(f"export {var}=\"{value}\"")
         print(f"{var}=\"{value}\"", file=sys.stderr)
 
-def gen_export(var: str, default: str|int, index: Optional[int] = None, fn: Optional[str] = None, required=False) -> None:
+def gen_export(var: str, default: str|int, index: Optional[int] = None,
+               fn: Optional[str] = None, required=False) -> None:
+    # check if environment variable is already set and warn if so
+    # because we will not overwrite it.
+    if var in os.environ:
+        envval = os.environ[var]
+        print(f"WARNING: `{var}` is an environment variable ({var}={envval}) so `{var}.txt` will not be used.", file=sys.stderr)
+        return
+    # check if file exists and if so, export the value
     if fn is None:
         p = Path(f"{var}.txt")
     else:
@@ -29,7 +40,7 @@ def gen_export(var: str, default: str|int, index: Optional[int] = None, fn: Opti
             export(var, value)
         return
     if required:
-        print(f"ERROR: Workflow parameter {var} not set.", file=sys.stderr)
+        print(f"ERROR: `{var}` not set and it is a required workflow parameter.", file=sys.stderr)
         print(f"exit 1")
         sys.exit(1)
     export(var, default)
@@ -41,14 +52,22 @@ def req_export(var: str, index: Optional[int] = None, fn: Optional[str] = None) 
     gen_export(var, "", index, fn, required=True)
 
 
+# Here we set all the default values. Some notes:
+#  - Use the `req_export` and `opt_export` functions to set the values.
+#  - The `req_export` function _will_ exit with an error if the value is not set.
+#  - The `opt_export` function _will not_ exit with an error if the value is not set
+#    and the default value will be used.
+#  - The first argument is the name of the parameter.
+#  - The second argument is the default value if the file `{param}.txt` does not exist.
+
 cwd = Path.cwd()
 
 workdir = cwd / 'workdir'
 workdir.mkdir(exist_ok=True)
 
 req_export('aoi')
-req_export('startdate', 1, 'daterange')
-req_export('enddate', 2, 'daterange')
+req_export('startdate', 1, 'daterange') # startdate is the first date in the daterange
+req_export('enddate', 2, 'daterange') # enddate is the second date in the daterange
 
 opt_export('opodspath', '/g/data/dg9/orbits')
 opt_export('dem', '/g/data/dg9/copernicus-dem/dem-australia.tif')
