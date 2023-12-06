@@ -11,7 +11,11 @@ The first stage of this project was to: (1) prototype a PS approach using GAMMA 
 
 The second stage of the project will be to: (1) Remove the Matlab / StaMPS dependency and implement our own PS approach in Python, (2) Combine the GAMMA driver and our PS approach into a single code to obtain numerous processing and storage efficiences. This is achievable as the PS approach only works on a sparse number of spatial locations across the landscape.
 
-## Setup on NCI
+## Initial setup on NCI
+
+These are just some initial housekeeping things that you might want to check and setup before you get started. If all this is sorted, just skip to the next 'Running the workflow' section.
+
+### Setup SSH link to GitHub and clone repository
 
 You may have the all this setup already but just in case you haven't. First, setup your GitHub access on NCI:
 - [Generating a SSH key](https://docs.github.com/authentication/connecting-to-github-with-ssh)
@@ -22,7 +26,20 @@ Once that is done, you should be able to do:
 cd ~
 git clone git@github.com:daleroberts/aludra.git
 ```
-This will create a path called `aludra` in your home directory with all the code. I have created a self-contained environment with Python, GDAL, GAMMA, etc. under `/g/data/dg9` and it assumes that the `aludra` path is under your home directory and it will add all these commands to your path if you do `source /g/data/dg9/env`. The PBS job command does this automatically so this is only necessary if you want to run the commands individually.
+This will create a path called `aludra` in your home directory with all the code.
+
+### Environment
+
+I have created a self-contained environment with Python, GDAL, GAMMA, etc. under `/g/data/dg9` and it assumes that the `aludra` path is under your home directory and it will add all these commands to your path if you do `source /g/data/dg9/env`. The PBS job command does this automatically so this is only necessary if you want to run the commands individually.
+
+### Data access
+
+You will need access to the following projects on the NCI:
+
+- `dg9` which is the Geodesy InSAR project
+- `fj7` which is the CopernicusHub project, this gives you access to the Sentinel-1 data
+
+You can request access [here](https://my.nci.org.au/mancini/login?next=/mancini/).
 
 ## Running the workflow
 
