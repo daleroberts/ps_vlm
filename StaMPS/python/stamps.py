@@ -18,6 +18,20 @@ from pathlib import Path
 np.set_printoptions(precision=4, suppress=True, linewidth=120, threshold=10)
 
 
+class dotdict(dict):
+
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+    __dir__ = dict.keys
+
+    def __getstate__(self):
+        return self.__dict__ 
+
+    def __setstate__(self, d):
+        self.__dict__.update(d)
+
+
 def log(msg: str) -> None:
     """Prints a message to stderr."""
     print(msg, file=sys.stderr)
@@ -25,9 +39,11 @@ def log(msg: str) -> None:
 
 def stamps_save(fn, *args, **kwargs):
     if len(args) > 0:
-        dump(args, fn)
+        log(f"Saving data of type {type(args[0])} to {fn}")
+        dump(args[0], fn)
     else:
-        dump(kwargs, fn)
+        log(f"Saving {kwargs.keys()} to {fn}")
+        dump(dotdict(kwargs), fn)
 
 
 def llh2local(llh, origin):
@@ -146,7 +162,7 @@ def getparm(parmname: Optional[str] = None, verbose: bool = False) -> Tuple[Opti
         if verbose:
             pprint(parmname, value)
 
-    return value, parmname
+    return value
 
 
 def setparm(parmname: str, value: Any) -> None:
@@ -225,7 +241,6 @@ def load_initial_gamma(endian: str = "b") -> None:
     # Read master day from rsc file
     with rscname.open() as f:
         rslcpar = Path(f.readline().strip())
-        # master_day = datetime.strptime(rslcpar.name[:8], "%Y%m%d").date()
         master_day = np.datetime64(rslcpar.name[:8])
 
     log(f"{rslcpar = }")
@@ -269,11 +284,6 @@ def load_initial_gamma(endian: str = "b") -> None:
     prf = readparm(rslcpar, "prf")
 
     mean_az = naz / 2 - 0.5
-
-    # Processing of the phase data
-    with phname.open("rb") as f:
-        ph = np.fromfile(f, dtype=np.float32)
-        ph = ph.view(np.complex64)  # Interpret the float32 pairs as complex numbers
 
     # Processing of the id, azimuth, range data
     with ijname.open("rb") as f:
@@ -324,6 +334,21 @@ def load_initial_gamma(endian: str = "b") -> None:
     # Mean range is given by the center range distance
     mean_range = rgc
 
+    # Processing of the phase data
+    with phname.open("rb") as f:
+        log(f"Loading phase data from `{phname.absolute()}`")
+        ph = np.fromfile(f, dtype='>c8').reshape((n_ifg, n_ps)).T
+
+    mu = np.mean(ph, axis=0)
+    for i in range(n_ifg):
+        log(f"{ifgs[i]}\tmean(phase) = {mu[i]:+.3f}")
+    log(f"{ph.shape = }")
+
+    # Inserting a column of 1's for master image
+    ph = np.insert(ph, master_ix, np.ones(n_ps), axis=1)
+    n_ps += 1
+    n_image += 1
+
     # Find center longitude and latitude
     ll0 = (np.max(lonlat, axis=0) + np.min(lonlat, axis=0)) / 2
 
@@ -355,13 +380,15 @@ def load_initial_gamma(endian: str = "b") -> None:
     # Rotation matrix
     rotm = np.array([[np.cos(theta), np.sin(theta)], [-np.sin(theta), np.cos(theta)]])
 
+    log(f"{rotm = }")
+
     # Rotate coordinates
     xynew = rotm @ xy.T
 
     # Check if rotation improves alignment and apply if it does
-    if (np.max(xynew[0]) - np.min(xynew[0]) < np.max(xy[0]) - np.min(xy[0])) and (
-        np.max(xynew[1]) - np.min(xynew[1]) < np.max(xy[1]) - np.min(xy[1])
-    ):
+    if (np.max(xynew[0]) - np.min(xynew[0]) < np.max(xy[0]) - np.min(xy[0])) and \
+       (np.max(xynew[1]) - np.min(xynew[1]) < np.max(xy[1]) - np.min(xy[1])):
+        log(f"Rotation improved alignment, applying a rotation of {theta * 180 / np.pi:.2f} degrees")
         xy = xynew.T
 
     # Convert xy to single precision after rotation
@@ -376,8 +403,10 @@ def load_initial_gamma(endian: str = "b") -> None:
     bperp_mat = bperp_mat[sort_ix]
     la = inci[sort_ix]
 
+    breakpoint()
+
     # Update ij with new point IDs and round xy to nearest mm
-    ij[:, 0] = np.arange(1, n_ps + 1)
+    ij[:, 0] = np.arange(1, n_ps)
     xy[:, 1:] = np.round(xy[:, 1:] * 1000) / 1000
 
     psver = 1
@@ -661,8 +690,8 @@ def topofit(cpxphase, bperp, n_trial_wraps, asym=0):
     return K0, C0, coh0, phase_residual
 
 
-def estimate_gamma(max_iters=1000) -> None:
-    """Estimate the initial gamma values."""
+def estimate_coherence(max_iters=1000) -> None:
+    """Estimate the initial coherence (gamma) at the persistent scatterer candidate locations."""
 
     # Load data
     ps = load("ps1.pkl")
@@ -686,13 +715,27 @@ def estimate_gamma(max_iters=1000) -> None:
     clap_alpha = getparm("clap_alpha")
     clap_beta = getparm("clap_beta")
 
+    log(f"{grid_size = }")
+    log(f"{filter_weighting = }")
+    log(f"{n_win = }")
+    log(f"{low_pass_wavelength = }")
+    log(f"{clap_alpha = }")
+    log(f"{clap_beta = }")
+
     # For maximum baseline length (max_K) calculation
     max_topo_err = getparm("max_topo_err")
     lambda_ = getparm("lambda")
 
+    log(f"{max_topo_err = }")
+    log(f"{lambda_ = }")
+
     gamma_change_convergence = getparm("gamma_change_convergence")
     gamma_max_iterations = getparm("gamma_max_iterations")
     small_baseline_flag = getparm("small_baseline_flag")
+
+    log(f"{gamma_change_convergence = }")
+    log(f"{gamma_max_iterations = }")
+    log(f"{small_baseline_flag = }")
 
     rho = 830000  # mean range - need only be approximately correct
     n_rand = 300000  # number of simulated random phase pixels
@@ -714,7 +757,7 @@ def estimate_gamma(max_iters=1000) -> None:
     # Normalizes the complex phase values to have unit magnitude
     A = np.abs(ph)
     A[A == 0] = 1  # Avoid divide by zero
-    ph = ph / A
+    ph /= A
 
     # Calculate the maximum baseline length (max_K) that can be tolerated for a
     # given topographic error (max_topo_err) considering the wavelength (lambda_) of the radar,
@@ -861,13 +904,19 @@ def test_getparm() -> None:
 
 
 def test_load_initial_gamma() -> None:
-    """Test the load_initial_gamma function."""
     cwd = Path.cwd()
     new = patchdirs()[0]
     os.chdir(new)
     load_initial_gamma()
     os.chdir(cwd)
 
+def test_estimate_coherence() -> None:
+    cwd = Path.cwd()
+    new = patchdirs()[0]
+    os.chdir(new)
+    estimate_coherence()
+    os.chdir(cwd)
 
 if __name__ == "__main__":
     test_load_initial_gamma()
+    test_estimate_coherence()
