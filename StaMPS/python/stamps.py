@@ -383,27 +383,24 @@ def load_initial_gamma(endian: str = "b") -> None:
     log(f"{rotm = }")
 
     # Rotate coordinates
-    xynew = rotm @ xy.T
+    xy = xy.T
+    xynew = rotm @ xy
 
     # Check if rotation improves alignment and apply if it does
     if (np.max(xynew[0]) - np.min(xynew[0]) < np.max(xy[0]) - np.min(xy[0])) and \
        (np.max(xynew[1]) - np.min(xynew[1]) < np.max(xy[1]) - np.min(xy[1])):
         log(f"Rotation improved alignment, applying a rotation of {theta * 180 / np.pi:.2f} degrees")
-        xy = xynew.T
-
-    # Convert xy to single precision after rotation
-    xy = np.array(xy, dtype=np.float32)
+        xy = xynew.T.astype(np.float32)
 
     # Sort xy in ascending y, then x order and apply sort index to other arrays
     sort_ix = np.lexsort((xy[:, 0], xy[:, 1]))
     xy = xy[sort_ix]
     ph = ph[sort_ix]
-    ij = ij[sort_ix]
     lonlat = lonlat[sort_ix]
     bperp_mat = bperp_mat[sort_ix]
     la = inci[sort_ix]
+    ij = ij[sort_ix]
 
-    breakpoint()
 
     # Update ij with new point IDs and round xy to nearest mm
     ij[:, 0] = np.arange(1, n_ps)
