@@ -37,13 +37,26 @@ def log(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
-def stamps_save(fn, *args, **kwargs):
+def stamps_save(fn:str, *args, **kwargs):
+    if fn.endswith(".pkl"):
+        fn = Path(fn)
+    else:
+        fn = Path(f"{fn}.pkl")
     if len(args) > 0:
         log(f"Saving data of type {type(args[0])} to {fn}")
         dump(args[0], fn)
     else:
         log(f"Saving {kwargs.keys()} to {fn}")
         dump(dotdict(kwargs), fn)
+
+
+def stamps_load(fn: str) -> Any:
+    if fn.endswith(".pkl"):
+        fn = Path(fn)
+    else:
+        fn = Path(f"{fn}.pkl")
+    log(f"Loading data from {fn}")
+    return load(fn)
 
 
 def llh2local(llh, origin):
@@ -101,15 +114,20 @@ def llh2local(llh, origin):
 
 def loadmat(fname: Path) -> Any:
     """Loads a .mat file."""
+
     mat = sio.loadmat(str(fname), squeeze_me=True)
     kvs = {k: v for k, v in mat.items() if not k.startswith("__")}
+
     for k in kvs.keys():
+
         try:
             v = kvs[k]
             v = v.flat[0] if isinstance(v, np.ndarray) else v
         except IndexError:
             pass
+
         kvs[k] = v
+
     return kvs
 
 
@@ -183,6 +201,7 @@ def setparm(parmname: str, value: Any) -> None:
 
 def readparm(fname: Path, parm: str, numval: int = 1) -> Any | List[Any]:
     """Reads a parameter value(s) from a file."""
+
     with fname.open("r") as f:
         lines = f.readlines()
 
@@ -208,6 +227,7 @@ def readparm(fname: Path, parm: str, numval: int = 1) -> Any | List[Any]:
 
 def patchdirs() -> List[Path]:
     """Get the patch directories."""
+
     dirs = []
 
     if Path("patch.list").exists():
@@ -226,17 +246,16 @@ def patchdirs() -> List[Path]:
 
 
 def load_initial_gamma(endian: str = "b") -> None:
-    """
-    Load all the data we need from GAMMA outputs.
-    """
+    """Load all the data we need from GAMMA outputs. """
+
     phname = Path("./pscands.1.ph")  # phase data
     ijname = Path("./pscands.1.ij")  # pixel location data
     llname = Path("./pscands.1.ll")  # latitude, longitude data
-    xyname = Path("./pscands.1.xy")  #
-    hgtname = Path("./pscands.1.hgt")  # height data
-    daname = Path("./pscands.1.da")
-    rscname = Path("../rsc.txt")
-    pscname = Path("../pscphase.in")
+    xyname = Path("./pscands.1.xy")  # local coordinates
+    hgtname = Path("./pscands.1.hgt") # height data
+    daname = Path("./pscands.1.da") # date data
+    rscname = Path("../rsc.txt") # config with master rslc.par file location
+    pscname = Path("../pscphase.in") # config with width and diff phase file locataions
 
     # Read master day from rsc file
     with rscname.open() as f:
@@ -259,6 +278,7 @@ def load_initial_gamma(endian: str = "b") -> None:
 
     log(f"{day = }")
     log(f"{master_ix = }")
+    log(f"{n_ifg = }")
 
     # Save interferogram dates
     np.savetxt("../small_baselines.list", ifgday, fmt="%s")
@@ -321,7 +341,7 @@ def load_initial_gamma(endian: str = "b") -> None:
         # log(f"{i = }\n\t{basename = }\n\t{B_TCN = }\n\t{BR_TCN = }\n\t{bc = }\n\t{bn = }")
 
     # Calculate mean perpendicular baseline
-    bperp = np.mean(bperp_mat, axis=1)
+    bperp = np.mean(bperp_mat, axis=0)
 
     log(f"{bperp = }")
 
@@ -346,7 +366,8 @@ def load_initial_gamma(endian: str = "b") -> None:
 
     # Inserting a column of 1's for master image
     ph = np.insert(ph, master_ix, np.ones(n_ps), axis=1)
-    n_ps += 1
+    bperp = np.insert(bperp, master_ix, 0)
+    n_ifg += 1
     n_image += 1
 
     # Find center longitude and latitude
@@ -356,6 +377,8 @@ def load_initial_gamma(endian: str = "b") -> None:
 
     # Convert to local coordinates and scale to meters
     xy = llh2local(lonlat.T, ll0).T * 1000
+
+    breakpoint()
 
     # Sort coordinates by x and y
     sort_x = xy[np.argsort(xy[:, 0])]
@@ -392,6 +415,8 @@ def load_initial_gamma(endian: str = "b") -> None:
         log(f"Rotation improved alignment, applying a rotation of {theta * 180 / np.pi:.2f} degrees")
         xy = xynew.T.astype(np.float32)
 
+    breakpoint()
+
     # Sort xy in ascending y, then x order and apply sort index to other arrays
     sort_ix = np.lexsort((xy[:, 0], xy[:, 1]))
     xy = xy[sort_ix]
@@ -401,15 +426,20 @@ def load_initial_gamma(endian: str = "b") -> None:
     la = inci[sort_ix]
     ij = ij[sort_ix]
 
-
     # Update ij with new point IDs and round xy to nearest mm
-    ij[:, 0] = np.arange(1, n_ps)
+    ij[:, 0] = np.arange(1, n_ps+1)
+
+    breakpoint()
+    
+    xy = np.insert(xy, 0, np.arange(1, n_ps+1), axis=1)
     xy[:, 1:] = np.round(xy[:, 1:] * 1000) / 1000
+
+    breakpoint()
 
     psver = 1
 
     stamps_save(
-        f"ps{psver}.pkl",
+        f"ps{psver}",
         ij=ij,
         lonlat=lonlat,
         xy=xy,
@@ -691,10 +721,10 @@ def estimate_coherence(max_iters=1000) -> None:
     """Estimate the initial coherence (gamma) at the persistent scatterer candidate locations."""
 
     # Load data
-    ps = load("ps1.pkl")
-    ph = load("ph1.pkl")
-    bp = load("bp1.pkl")
-    la = load("la1.pkl")
+    ps = stamps_load("ps1")
+    ph = stamps_load("ph1")
+    bp = stamps_load("bp1")
+    la = stamps_load("la1")
 
     bperp = ps.bperp
     n_ifg = ps.n_ifg
@@ -702,7 +732,11 @@ def estimate_coherence(max_iters=1000) -> None:
     n_ps = ps.n_ps
     ifgday_ix = ps.ifgday_ix
     xy = ps.xy
-    inc_mean = ps.mean_incidence
+    master_ix = ps.master_ix
+
+    breakpoint()
+
+    inc_mean = ps.mean_incidence + np.deg2rad(3) # StaMPS hardcoded value (3 deg)
 
     # CLAP filter parameters
     grid_size = getparm("filter_grid_size")
@@ -751,6 +785,13 @@ def estimate_coherence(max_iters=1000) -> None:
     good_ix = np.ones(ps.n_ps, dtype=bool)
     good_ix[null_i] = False
 
+    if (small_baseline_flag.lower() == "n"):
+        keep_ix = list(range(master_ix)) + list(range(master_ix+1, n_ifg))
+        ph = ph[:, keep_ix]
+        bperp = bperp[keep_ix]
+        n_ifg = n_ifg - 1
+        n_image = n_image - 1
+
     # Normalizes the complex phase values to have unit magnitude
     A = np.abs(ph)
     A[A == 0] = 1  # Avoid divide by zero
@@ -790,10 +831,11 @@ def estimate_coherence(max_iters=1000) -> None:
     coh_rand = np.zeros(n_rand)
     for i in reversed(range(n_rand)):
         # Fit a topographic phase model to each random phase point
-        K_r, C_r, coh_r = topofit(exp_rand_ifg[i, :], bperp, n_trial_wraps)
+        K_r, C_r, coh_r, res_r = topofit(exp_rand_ifg[i, :], bperp, n_trial_wraps)
         # Store the first coherence value for each random point
-        coh_rand[i] = coh_r[0]
+        coh_rand[i] = coh_r
 
+    coh_bins = np.arange(0.005, 0.995, 0.01)
     Nr, _ = np.histogram(coh_rand, bins=coh_bins)
 
     # Find the last non-zero bin index using np.max and np.nonzero
@@ -804,10 +846,15 @@ def estimate_coherence(max_iters=1000) -> None:
     ph_patch = np.zeros_like(ph, dtype=np.float32)
     N_patch = np.zeros(n_ps)
 
-    grid_offset_x = np.min(xy[:, 2]) - 1e-6
-    grid_offset_y = np.min(xy[:, 1]) - 1e-6
-    grid_ij = np.ceil((xy[:, 2:0:-1] - [grid_offset_x, grid_offset_y]) / grid_size).astype(int) - 1
-    grid_ij = np.clip(grid_ij, 0, np.max(grid_ij, axis=0) - 1)  # Ensure indices are within bounds
+    #grid_offset_x = np.min(xy[:, 2]) - 1e-6
+    #grid_offset_y = np.min(xy[:, 1]) - 1e-6
+    #grid_ij = np.ceil((xy[:, 2:0:-1] - [grid_offset_x, grid_offset_y]) / grid_size).astype(int) - 1
+    #grid_ij = np.clip(grid_ij, 0, np.max(grid_ij, axis=0) - 1)  # Ensure indices are within bounds
+
+    grid_ij[:, 0] = np.ceil((xy[:, 2] - np.min(xy[:, 2]) + 1e-6) / grid_size).astype(int)
+    grid_ij[grid_ij[:, 0] == np.max(grid_ij[:, 0]), 0] = np.max(grid_ij[:, 0]) - 1
+    grid_ij[:, 1] = np.ceil((xy[:, 1] - np.min(xy[:, 1]) + 1e-6) / grid_size).astype(int)
+    grid_ij[grid_ij[:, 1] == np.max(grid_ij[:, 1]), 1] = np.max(grid_ij[:, 1]) - 1
 
     i_loop = 1  # Initialize loop counter
     weighting = 1.0 / D_A
