@@ -232,7 +232,8 @@ echo $width > pscphase.in
 if ($SB_FLAG == 1) then
     \ls $datadir/SMALL_BASELINES/*/*.diff >> pscphase.in
 else
-    \ls $datadir/diff0/*.diff >> pscphase.in
+    # DR modified to use subset of diffs. This is the bash version of
+    slc_to_diff $master calamp.out >> pscphase.in
 endif
 
 

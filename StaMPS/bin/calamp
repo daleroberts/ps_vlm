@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """
-Calculate calibration factor for SLCs
+calamp: Calculate calibration factor for SLCs.
+
+Different to the original code, this code also now checks that the
+heading of each observation is similar to the master observation.
 """
 import numpy as np
 import argparse
 import sys
+
+def log(msg):
+    """Log a message."""
+    print(msg)
 
 parser = argparse.ArgumentParser()
 parser.add_argument( "parmfile_in", help="Text file with list of SLC file names")
@@ -20,26 +27,82 @@ if args.precision == "s":
 else:
     typestr = ">c8"
 
-print(f"dtype: {typestr} ({np.dtype(typestr).kind} {np.dtype(typestr).itemsize * 8}-bit)")
+log(f"dtype: {typestr} ({np.dtype(typestr).kind} {np.dtype(typestr).itemsize * 8}-bit)")
+
+# Identify the master observation
+with open("rsc.txt") as fd:
+    masterfn = fd.readline().strip()
+
+# read the heading parameter from the master observation
+with open(masterfn) as fd:
+    for line in fd.readlines():
+        if line.startswith("heading"):
+            master_heading = float(line.split()[1])
+            break
 
 fns = []
 with open(args.parmfile_in) as fd:
     for line in fd.readlines():
         fns.append(line.strip())
 
+# open the parameter file associated with each file in 'fns'
+# and then read the heading parameter. If the heading is
+# different to the master heading, then remove the file from
+# the list of files to process
+
+fns2 = []
+for fn in fns:
+    parfn = fn + ".par"
+    with open(parfn) as fd:
+        for line in fd.readlines():
+            if line.startswith("heading"):
+                heading = float(line.split()[1])
+                break
+
+    if np.abs(heading - master_heading) > 0.01:
+        log(f"{fn} heading: {heading:9.6f} master_heading: {master_heading:9.6f} - skipping")
+    else:
+        log(f"{fn} heading: {heading:9.6f} master_heading: {master_heading:9.6f}")
+        fns2.append(fn)
+
+log("")
+log(f"Before: {len(fns)} obs After: {len(fns2)} obs")
+log("")
+
+fns = fns2
+
+mean_amps = []
+sd_amps = []
+
 with open(args.parmfile_out, "w") as fd:
-    for fn in fns:
+    for i, fn in enumerate(fns):
         try:
             data = np.fromfile(fn, dtype=typestr)
             data.shape = (-1, args.width)
 
             amp = np.absolute(data)
-            amp[amp <= 0.001] = np.nan
+            amp[amp <= 10E-6] = np.nan
 
-            calib_factor = np.nanmean(amp)
+            mean_amp = np.nanmean(amp)
+            sd_amp = np.nanstd(amp)
 
-            fd.write(f"{fn} {calib_factor}\n")
+            mean_amps.append(mean_amp)
+            sd_amps.append(sd_amp)
 
-            print(f"{fn} {calib_factor}")
+            fd.write(f"{fn} {mean_amp}\n")
+
+            log(f"{i:3d}: {fn} mean_amp: {mean_amp:.4f}")
         except ValueError as e:
-            print(f"Error processing {fn}: {e}", file=sys.stderr)
+            log(f"Error processing {fn}: {e}")
+
+mean_amps = np.array(mean_amps)
+sd_amps = np.array(sd_amps)
+
+mu = np.nanmean(mean_amps)
+sd = np.nanstd(mean_amps)
+
+for i, fn in enumerate(fns):
+    star = " " if np.abs(mean_amps[i] - mu) < 2 * sd else "*"
+    print(f"{i:3d}: {fn} mean_amp: {mean_amps[i]:+8.4f} sd_amp: {sd_amps[i]:+8.4f} {star}") 
+
+

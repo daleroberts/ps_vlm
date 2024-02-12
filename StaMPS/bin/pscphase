@@ -18,30 +18,34 @@ args = parser.parse_args()
 
 ts = ">c8"
 
-
 def fileshape(fn, rgs):
     size = fn.stat().st_size
     azs = size // (rgs * np.dtype(ts).itemsize)
     return (azs, rgs)
 
-
 with open(args.parmfile) as fd:
     width = int(fd.readline().strip())
     ifgfns = [Path(line.strip()) for line in fd.readlines()]
 
-print(f"width (aka. range_samples) = {width}")
-print(f"number of interferograms   = {len(ifgfns)}")
+nfiles = len(ifgfns)
 
-for fn in ifgfns:
+print(f"width (aka. range_samples) = {width}")
+print(f"number of interferograms   = {nfiles}")
+
+for i, fn in enumerate(ifgfns):
     azs, rgs = fileshape(fn, width)
-    print(f"{fn} {(azs, rgs)}")
+    print(f"{i:3d}: {fn} azs:{azs} rgs:{rgs}")
+
+print("")
+
+mean_abs_phs = np.zeros(nfiles, dtype="float32")
 
 with open(args.ij) as ijfd, open(args.ph, "w") as phfd:
     ifgmm = [np.memmap(f, dtype=ts, shape=(azs, rgs)) for f in ifgfns]
 
-    for fn, ifg in zip(ifgfns, ifgmm):
+    for i, (fn, ifg) in enumerate(zip(ifgfns, ifgmm)):
         phs = []
-        print(f"Processing {fn}", end="")
+        print(f"{i:3d}: {fn}", end="")
         for line in ijfd:
             n, az, rg = [int(x) - 1 for x in line.strip().split()]
             ph = np.array(ifg[az, rg], dtype=">c8")
@@ -51,4 +55,18 @@ with open(args.ij) as ijfd, open(args.ph, "w") as phfd:
             phs.append(ph)
         ijfd.seek(0)
         phs = np.array(phs, dtype=">c8")
-        print(f"\t{np.mean(phs):.4f}\t{np.mean(np.absolute(phs)):.4f}")
+        mean_ph = np.mean(phs)
+        mean_abs_ph = np.mean(np.absolute(phs))
+        mean_abs_phs[i] = mean_abs_ph
+        print(f"\tmean_phase: {mean_ph:+8.4f}\tmean_abs_phase: {mean_abs_ph:+8.4f}")
+
+mu = np.mean(mean_abs_phs)
+sigma = np.std(mean_abs_phs)
+
+print("")
+print(f"mean_abs_phs: {mu:+8.4f} +/- {sigma:+8.4f}")
+print("")
+
+for i, fn in enumerate(ifgfns):
+    star = " " if np.abs(mean_abs_phs[i] - mu) < 2 * sigma else "*"
+    print(f"{i:3d}: {fn} {mean_abs_phs[i]:+8.4f} {star}")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Calculate dispersion of a stack of SLCs and generate PS candidates
+selpsc_patch: Calculate dispersion of a stack of SLCs and generate PS candidates
 based on the dispersion threshold.
 """
 
@@ -13,6 +13,15 @@ from contextlib import ExitStack
 
 np.set_printoptions(precision=4, suppress=True)
 warnings.filterwarnings("ignore")
+
+def log(msg):
+    """Log a message."""
+    print(msg)
+
+def filedim(fn):
+    size = fn.stat().st_size
+    nlines = size // (width * np.dtype(ts).itemsize)
+    return (nlines, width)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("parmfile")
@@ -31,14 +40,7 @@ if args.precision == "s":
 else:
     ts = ">c8"
 
-
-def filedim(fn):
-    size = fn.stat().st_size
-    nlines = size // (width * np.dtype(ts).itemsize)
-    return (width, nlines)
-
-
-print(f"dtype: {ts} ({np.dtype(ts).kind} {np.dtype(ts).itemsize * 8}-bit)")
+log(f"dtype: {ts} ({np.dtype(ts).kind} {np.dtype(ts).itemsize * 8}-bit)")
 
 calib_factor = []
 D_thresh = 0.0
@@ -60,10 +62,11 @@ with open(args.patch_in) as fd:
     az_end = int(fd.readline())
 
 for fn, c in zip(fns, calib_factor):
-    print(f"{fn} {c:6.4f} {filedim(fn)}")
+    azs, rgs = filedim(fn)
+    print(f"{fn} mean_amp:{c:6.4f} azs:{azs} rgs:{rgs}")
 
 calib = np.array(calib_factor)
-width, nlines = filedim(fns[0])
+nlines, width = filedim(fns[0])
 nfiles = len(fns)
 D_sq_thresh = D_thresh**2
 rg_start = max(0, rg_start - 1)
@@ -72,14 +75,15 @@ az_start = max(0, az_start - 1)
 az_end = min(nlines, az_end - 1)
 pscid = 0
 
-print(f"dispersion threshold = {D_thresh}")
-print(f"dispersion-squared threshold = {D_sq_thresh}")
-print(f"width = {width}")
-print(f"nlines = {nlines}")
-print(f"rg_start = {rg_start}")
-print(f"rg_end = {rg_end}")
-print(f"az_start = {az_start}")
-print(f"az_end = {az_end}")
+log(f"nfiles = {nfiles}")
+log(f"dispersion threshold = {D_thresh:.4f}")
+log(f"dispersion-squared threshold = {D_sq_thresh:.4f}")
+log(f"width = {width}")
+log(f"nlines = {nlines}")
+log(f"rg_start = {rg_start}")
+log(f"rg_end = {rg_end}")
+log(f"az_start = {az_start}")
+log(f"az_end = {az_end}")
 
 nskip = 0
 
