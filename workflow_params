@@ -10,13 +10,14 @@ import os
 from pathlib import Path
 from typing import List, Optional
 
+EXPORTED = list()
+
 def export(var, value: str|int):
     if isinstance(value, int):
-        print(f"export {var}={value}")
-        print(f"{var}={value}", file=sys.stderr)
+        print(f"export {var}=${{{var}:-{value}}};")
     else:
-        print(f"export {var}=\"{value}\"")
-        print(f"{var}=\"{value}\"", file=sys.stderr)
+        print(f"export {var}=${{{var}:-\"{value}\"}};")
+    EXPORTED.append(var)
 
 def gen_export(var: str, default: str|int, index: Optional[int] = None,
                fn: Optional[str] = None, required=False) -> None:
@@ -51,6 +52,10 @@ def opt_export(var: str, default: str|int, index: Optional[int] = None, fn: Opti
 def req_export(var: str, index: Optional[int] = None, fn: Optional[str] = None) -> None:
     gen_export(var, "", index, fn, required=True)
 
+def print_exported() -> None:
+    for var in EXPORTED:
+        print(f"echo {var}=${{{var}}};")
+
 
 # Here we set all the default values. Some notes:
 #  - Use the `req_export` and `opt_export` functions to set the values.
@@ -76,3 +81,6 @@ opt_export('azlks', 1)
 opt_export('rlks', 1)
 opt_export('cwd', str(cwd))
 opt_export('workdir', str(cwd / 'workdir'))
+
+
+print_exported()

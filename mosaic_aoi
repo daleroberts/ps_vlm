@@ -53,6 +53,35 @@ def X(cmd, quiet=True):
         print(f"# FAIL: {cmd}")
         sys.exit(cp.returncode)
 
+def read_aoi_from_file(fn: Path, idx: int = 0) -> ogr.Geometry:
+    """Read a GeoJSON or GeoJSONSeq file"""
+    if not fn.exists():
+        raise FileNotFoundError(f"{fn} does not exist")
+    driver = ogr.GetDriverByName('GeoJSONSeq' if fn.suffix == ".geojsonl" else 'GeoJSON')
+    if not driver:
+        raise Exception("GeoJSONSeq driver is not available")
+    ds = driver.Open(str(fn))
+    layer = ds.GetLayer()
+    try:
+        feature = layer[idx]
+        return feature.GetGeometryRef().Clone()
+    except IndexError:
+        return None
+
+def bbox_to_aoi_geom(bbox: Tuple[float, ...]) -> ogr.Geometry:
+    """Convert a bounding box to an AOI geometry."""
+    aoi_ring = ogr.Geometry(ogr.wkbLinearRing)
+    aoi_ring.AddPoint(bbox[0], bbox[1])
+    aoi_ring.AddPoint(bbox[2], bbox[1])
+    aoi_ring.AddPoint(bbox[2], bbox[3])
+    aoi_ring.AddPoint(bbox[0], bbox[3])
+    aoi_ring.CloseRings()
+
+    aoi_geom = ogr.Geometry(ogr.wkbPolygon)
+    aoi_geom.AddGeometry(aoi_ring)
+    aoi_geom.FlattenTo2D()
+    return aoi_geom
+
 def buffer_bbox(bbox: Tuple[float, float, float, float], buffer_percentage: float) -> Tuple[float, float, float, float]:
     """ Returns a new bounding box buffered by a given percentage. """
 
@@ -164,7 +193,7 @@ def merge_bursts(srcs: list[Path], dst: Path) -> None:
         in_ds = None
         out_ds = None
 
-def filter_by_aoi(allfn: Path, aoifn: Path, aoi: tuple, srs: str, must_contain:bool=False) -> None:
+def filter_by_aoi(allfn: Path, aoifn: Path, aoi_geom: ogr.Geometry, srs: str, must_contain:bool=False) -> None:
     """ Creates a GeoJSON file with the burst geometries intersecting with the AOI. """
     in_ds = ogr.Open(str(allfn))
     in_lyr = in_ds.GetLayer()
@@ -181,45 +210,37 @@ def filter_by_aoi(allfn: Path, aoifn: Path, aoi: tuple, srs: str, must_contain:b
 
     out_lyr.CreateFields(in_lyr.schema)
 
-    min_x, min_y, max_x, max_y = aoi
-    aoi_poly = ogr.Geometry(ogr.wkbPolygon)
-
-    ring = ogr.Geometry(ogr.wkbLinearRing)
-    ring.AddPoint(min_x, min_y)
-    ring.AddPoint(max_x, min_y)
-    ring.AddPoint(max_x, max_y)
-    ring.AddPoint(min_x, max_y)
-    ring.AddPoint(min_x, min_y)
-
-    aoi_poly.AddGeometry(ring)
-
-    # Calculate the buffer distance as 1% of the smallest AOI dimension
-    buffer_distance = min(max_x - min_x, max_y - min_y) * -0.01
-    aoi_poly = aoi_poly.Buffer(buffer_distance)
-    
     union_poly = ogr.Geometry(ogr.wkbMultiPolygon)
     for feat in in_lyr:
         geom = feat.GetGeometryRef()
         if geom is not None:
             union_poly = union_poly.Union(geom)
 
-    with open("union.geojsonl", "a") as fd:
-        fd.write(union_poly.ExportToJson())
-        fd.write("\n")
+    #with open("union.geojsonl", "a") as fd:
+    #    fd.write(union_poly.ExportToJson())
+    #    fd.write("\n")
 
-    # Check if the AOI polygon contains the union of the polygons.
-    if must_contain and not union_poly.Contains(aoi_poly):
-        print("Warning: Bursts do not cover the AOI.")
-        # If not, discard all features by destroying the data source.
-        out_lyr = None
-        out_ds = None
-        return
+    ## Check if the AOI polygon contains the union of the polygons.
+    #if must_contain and not union_poly.Contains(aoi_geom):
+    #    print("Warning: Bursts do not cover the AOI.")
+    #    # If not, discard all features by destroying the data source.
+    #    out_lyr = None
+    #    out_ds = None
+    #    return
+
+    small_geom = aoi_geom.Buffer(-aoi_geom.GetArea() * 0.30)
 
     # If it does, proceed to create features.
     in_lyr.ResetReading()  # Reset the reading to iterate again for creating features
     for feat in in_lyr:
-        if feat.GetGeometryRef().Intersects(aoi_poly):
-            out_lyr.CreateFeature(feat)
+        if feat.GetGeometryRef().Intersects(aoi_geom):
+            overlap = feat.GetGeometryRef().Intersection(aoi_geom).GetArea() / feat.GetGeometryRef().GetArea()
+            if must_contain and feat.GetGeometryRef().Contains(small_geom):
+                out_lyr.CreateFeature(feat)
+                log(f"{feat.GetField(0)} AOI_Overlap: {overlap:.2f} (must_contain)")
+            if not must_contain:
+                out_lyr.CreateFeature(feat)
+                log(f"{feat.GetField(0)} AOI_Overlap: {overlap:.2f}")
     
     # Clean up the data source to flush the data to disk
     in_ds = None
@@ -273,7 +294,7 @@ def mk_burst_tab(bursts: Dict[str, List[Tuple[str, int]]], obsfn: Path, safe: Pa
 
     return burstfn
 
-def burst_tabs_for_intersecting(zipfiles, aoi, srs, wd, must_contain=False):
+def burst_tabs_for_intersecting(zipfiles, aoi_geom, srs, wd, must_contain=False):
     """ Creates burst_tab files for the zipfiles intersecting with the AOI. """
 
     cwd = Path(os.getcwd())
@@ -302,9 +323,9 @@ def burst_tabs_for_intersecting(zipfiles, aoi, srs, wd, must_contain=False):
     aoifn.unlink(missing_ok=True)
     
     merge_bursts(bfns, allfn)
-    filter_by_aoi(allfn, aoifn, aoi, srs, must_contain)
+    filter_by_aoi(allfn, aoifn, aoi_geom, srs, must_contain)
     bursts = read_bursts(aoifn)
-    nbursts = len(bursts)
+    nbursts = sum([len(b) for b in bursts.values()])
     
     log(f"{nbursts=}")
     log(f"{bursts=}")
@@ -399,8 +420,11 @@ def select_tabs(burst_tabs, unique=False):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-srs", default="EPSG:4326", metavar=('"EPSG:4326"'))
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-aoifile", type=Path)
+    group.add_argument("-bbox", nargs=4, type=float, metavar=("<xmin>", "<ymin>", "<xmax>", "<ymax>"))
+    parser.add_argument("-aoiidx", type=int, default=0)
     parser.add_argument("-aoifn", default=Path("aoi.geojson"), type=Path, metavar=('"aoi.geojson"'))
-    parser.add_argument("-aoi", nargs=4, metavar=("minX", "minY", "maxX", "maxY"), type=float, required=True)
     parser.add_argument("-opods", default=Path("."), type=Path)
     parser.add_argument("-template", type=str, metavar=("{date}.{pol}.SLC_tab"), default="{date}.{pol}.SLC_tab")
     parser.add_argument("-pol", type=str, default="vv")
@@ -412,8 +436,6 @@ def main():
     args = parser.parse_args()
     
     srs = args.srs
-    aoifn = args.aoifn
-    aoi = buffer_bbox((args.aoi[0], args.aoi[1], args.aoi[2], args.aoi[3]), 0)
     opods = args.opods.resolve()
     pol = args.pol
     dtype = args.dtype
@@ -423,12 +445,24 @@ def main():
     zipfiles = list(args.zipfiles)
     nzipfiles = len(zipfiles)
     cwd = Path(os.getcwd())
-    
-    save_aoi_to_geojson(aoi, aoifn)
+
+    if args.aoifile:
+        log(f"Geometry set from {args.aoifile}")
+        aoi_geom = read_aoi_from_file(args.aoifile, args.aoiidx)
+
+    if args.bbox:
+        bbox = args.bbox
+        log(f"{bbox=}")
+        aoi_geom = bbox_to_aoi_geom(bbox)
+
+    if args.aoifile and aoi_geom is None:
+        log(f"Could not read geometry from {args.aoifile}")
+        sys.exit(1)
+
+
+    #save_aoi_to_geojson(aoi, aoifn)
 
     log(f"{srs=}")
-    log(f"{aoifn=}")
-    log(f"{aoi=}")
     log(f"{opods=}")
     log(f"{pol=}")
     log(f"{dtype=}")
@@ -464,7 +498,7 @@ def main():
             log(f"{zipfn=}")
             log(f"{slctab=}")
             
-        burst_tabs = burst_tabs_for_intersecting(obsfns, aoi, srs, wd, must_contain)
+        burst_tabs = burst_tabs_for_intersecting(obsfns, aoi_geom, srs, wd, must_contain)
         burst_tabs = select_tabs(burst_tabs, unique=unique)
         extract_slcs(slctab, burst_tabs, pol, dtype, opods, wd)
 

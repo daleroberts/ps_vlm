@@ -21,6 +21,8 @@ from pathlib import Path
 from queue import Queue
 from osgeo import ogr
 
+ogr.UseExceptions()
+
 RE_WKT = r'<ESA_TILEOUTLINE_FOOTPRINT_WKT>([^<]+)</ESA_TILEOUTLINE_FOOTPRINT_WKT>'
 RE_PASS = r"<PASS direction='(.*?)' />"
 
@@ -29,6 +31,21 @@ BBox = Tuple[float, float, float, float]
 def log(s: str) -> None:
     """Log a message to stderr."""
     print(s, file=sys.stderr)
+
+def read_aoi_from_file(fn: Path, idx: int = 0) -> ogr.Geometry:
+    """Read a GeoJSON or GeoJSONSeq file"""
+    if not fn.exists():
+        raise FileNotFoundError(f"{fn} does not exist")
+    driver = ogr.GetDriverByName('GeoJSONSeq' if fn.suffix == ".geojsonl" else 'GeoJSON')
+    if not driver:
+        raise Exception("GeoJSONSeq driver is not available")
+    ds = driver.Open(str(fn))
+    layer = ds.GetLayer()
+    try:
+        feature = layer[idx]
+        return feature.GetGeometryRef().Clone()
+    except IndexError:
+        return None
 
 class ObservationFinder:
     """
@@ -72,7 +89,7 @@ class ObservationFinder:
                 obs_geom = ogr.CreateGeometryFromWkt(obs_wkt)
                 intersects = True
                 if self.aoi_geom:
-                    intersects = self.aoi_geom and self.aoi_geom.Intersect(obs_geom)
+                    intersects = self.aoi_geom and self.aoi_geom.Intersect(obs_geom) is True
                 if intersects and passdir == self.passdir:
                     self.results.append((path, obs_wkt, passdir))
 
@@ -171,7 +188,7 @@ class ObservationFinder:
 
         with ThreadPoolExecutor(workers) as executor:
             executor.submit(self.work)
-            time.sleep(0.5)
+            time.sleep(1)
             for _ in range(workers-1):
                 if self.queue.qsize() > workers:
                     executor.submit(self.work)
@@ -228,6 +245,7 @@ if __name__ == "__main__":
     group.add_argument("-aoi", type=str)
     group.add_argument("-aoifile", type=Path)
     group.add_argument("-bbox", nargs=4, type=float, metavar=("<xmin>", "<ymin>", "<xmax>", "<ymax>"))
+    parser.add_argument("-aoiidx", type=int, default=0)
     parser.add_argument("-out", dest="output_file")
     parser.add_argument("-root", type=Path, default=Path("/g/data/fj7/Copernicus/Sentinel-1/C-SAR/SLC"))
     parser.add_argument("-workers", type=int, default=10)
@@ -245,16 +263,26 @@ if __name__ == "__main__":
     log(f"{root=}")
     log(f"{workers=}")
 
+    aoi_geom = None
+
     if args.aoifile:
-        aoi_geom = ogr.CreateGeometryFromJson(args.aoifile.read_text())
-    elif args.aoi:
-        aoi_geom = ogr.CreateGeometryFromJson(args.aoi)
-    elif args.bbox:
+        log(f"Geometry set from {args.aoifile}")
+        aoi_geom = read_aoi_from_file(args.aoifile, args.aoiidx)
+
+    if args.bbox:
         bbox = args.bbox
         log(f"{bbox=}")
         aoi_geom = bbox_to_aoi_geom(bbox)
-    else:
-        aoi_geom = None
+
+    if args.aoifile and aoi_geom is None:
+        log(f"Could not read geometry from {args.aoifile}")
+        sys.exit(1)
+
+    # buffer the aoi_geom
+    if aoi_geom:
+        aoi_geom = aoi_geom.Buffer(aoi_geom.GetArea() * 1.0)
+        with open("buf.geojsonl", "w") as f:
+            f.write(aoi_geom.ExportToJson())
 
     try:
         finder = ObservationFinder(root, start_date, end_date, aoi_geom, passdir)
