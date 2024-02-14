@@ -19,14 +19,13 @@ np.set_printoptions(precision=4, suppress=True, linewidth=120, threshold=10)
 
 
 class dotdict(dict):
-
     __getattr__ = dict.get
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
     __dir__ = dict.keys
 
     def __getstate__(self):
-        return self.__dict__ 
+        return self.__dict__
 
     def __setstate__(self, d):
         self.__dict__.update(d)
@@ -37,16 +36,25 @@ def log(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
-def stamps_save(fn:str, *args, **kwargs):
+def datenum(dates):
+    # TODO: Replace with datetime
+    from datetime import datetime as dt
+
+    dts = [dt.utcfromtimestamp((d - np.datetime64("1970-01-01T00:00:00Z")) / np.timedelta64(1, "s")) for d in dates]
+    return np.array(
+        [366 + d.toordinal() + (d - dt.fromordinal(d.toordinal())).total_seconds() / (24 * 60 * 60) for d in dts],
+        dtype=np.float64,
+    )
+
+
+def stamps_save(fn: str, *args, **kwargs):
     if fn.endswith(".pkl"):
         fn = Path(fn)
     else:
         fn = Path(f"{fn}.pkl")
     if len(args) > 0:
-        log(f"Saving data of type {type(args[0])} to {fn}")
         dump(args[0], fn)
     else:
-        log(f"Saving {kwargs.keys()} to {fn}")
         dump(dotdict(kwargs), fn)
 
 
@@ -55,8 +63,24 @@ def stamps_load(fn: str) -> Any:
         fn = Path(fn)
     else:
         fn = Path(f"{fn}.pkl")
-    log(f"Loading data from {fn}")
     return load(fn)
+
+
+def llh2local_alternate(llh, origin):
+    """
+    Converts from longitude and latitude to local coordinates given an origin.
+    llh (lon, lat, height) and origin should be in decimal degrees.
+    Note that heights are ignored and that xy is in km.
+    """
+
+    import pymap3d as pm
+
+    xy = np.zeros((2, llh.shape[1]))
+    for i, (lon, lat) in enumerate(llh.T):
+        x, y, z = pm.geodetic2enu(lat, lon, 0, origin[1], origin[0], 0)
+        xy[0, i] = x
+        xy[1, i] = y
+    return xy / 1000
 
 
 def llh2local(llh, origin):
@@ -67,12 +91,12 @@ def llh2local(llh, origin):
     """
 
     # Set ellipsoid constants (WGS84)
-    a = 6378137.0
-    e = 0.08209443794970
+    a = 6378137.0  # semi-major axis
+    e = 0.08209443794970  # eccentricity
 
     # Convert to radians
-    llh = np.double(llh) * np.pi / 180
-    origin = np.double(origin) * np.pi / 180
+    llh = np.deg2rad(llh)
+    origin = np.deg2rad(origin)
 
     # Initialize xy array
     xy = np.zeros((2, llh.shape[1]))
@@ -80,6 +104,10 @@ def llh2local(llh, origin):
     # Do the projection
     z = llh[1, :] != 0
     dlambda = llh[0, z] - origin[0]
+
+    # calculates the meridional arc length M for each point and the origin M0, considering
+    # the ellipsoidal shape of the Earth. This involves a series expansion that accounts
+    # for the ellipsoid's eccentricity.
 
     M = a * (
         (1 - e**2 / 4 - 3 * e**4 / 64 - 5 * e**6 / 256) * llh[1, z]
@@ -98,8 +126,8 @@ def llh2local(llh, origin):
     N = a / np.sqrt(1 - e**2 * np.sin(llh[1, z]) ** 2)
     E = dlambda * np.sin(llh[1, z])
 
-    xy[0, z] = N * 1 / np.tan(llh[1, z]) * np.sin(E)
-    xy[1, z] = M - M0 + N * 1 / np.tan(llh[1, z]) * (1 - np.cos(E))
+    xy[0, z] = N / np.tan(llh[1, z]) * np.sin(E)
+    xy[1, z] = M - M0 + N / np.tan(llh[1, z]) * (1 - np.cos(E))
 
     # Handle special case of latitude = 0
     dlambda = llh[0, ~z] - origin[0]
@@ -119,13 +147,12 @@ def loadmat(fname: Path) -> Any:
     kvs = {k: v for k, v in mat.items() if not k.startswith("__")}
 
     for k in kvs.keys():
-
         try:
             v = kvs[k]
-            v = v.flat[0] if isinstance(v, np.ndarray) else v
+            if isinstance(v, np.ndarray) and v.size == 1:
+                v = v.flat[0]
         except IndexError:
             pass
-
         kvs[k] = v
 
     return kvs
@@ -246,42 +273,47 @@ def patchdirs() -> List[Path]:
 
 
 def load_initial_gamma(endian: str = "b") -> None:
-    """Load all the data we need from GAMMA outputs. """
+    """Load all the data we need from GAMMA outputs."""
 
     phname = Path("./pscands.1.ph")  # phase data
     ijname = Path("./pscands.1.ij")  # pixel location data
     llname = Path("./pscands.1.ll")  # latitude, longitude data
     xyname = Path("./pscands.1.xy")  # local coordinates
-    hgtname = Path("./pscands.1.hgt") # height data
-    daname = Path("./pscands.1.da") # date data
-    rscname = Path("../rsc.txt") # config with master rslc.par file location
-    pscname = Path("../pscphase.in") # config with width and diff phase file locataions
+    hgtname = Path("./pscands.1.hgt")  # height data
+    daname = Path("./pscands.1.da")  # date data
+    rscname = Path("../rsc.txt")  # config with master rslc.par file location
+    pscname = Path("../pscphase.in")  # config with width and diff phase file locataions
 
     # Read master day from rsc file
     with rscname.open() as f:
         rslcpar = Path(f.readline().strip())
-        master_day = np.datetime64(rslcpar.name[:8])
 
     log(f"{rslcpar = }")
-    log(f"{master_day = }")
 
     # Read interferogram dates
     with pscname.open() as f:
         ifgs = [Path(line.strip()) for line in f.readlines()][1:]
 
-    ifgday = np.array([[ifg.name[:8], ifg.name[9:17]] for ifg in ifgs], dtype="datetime64")
-    n_ifg = len(ifgs)
-    day, ifgday_ix = np.unique(ifgday, return_inverse=True)
-    ifgday_ix = ifgday_ix.reshape(n_ifg, 2)
-    master_ix = np.where(day == master_day)[0][0]
+    master_day = rslcpar.name[:8]
+    log(f"{master_day = }")
+
+    master_day = datenum(np.array([f"{master_day[0:4]}-{master_day[4:6]}-{master_day[6:8]}"], dtype="datetime64"))[0]
+    ifgdts = np.array([f"{ifg.name[9:13]}-{ifg.name[13:15]}-{ifg.name[15:17]}" for ifg in ifgs], dtype="datetime64")
+    day = datenum(ifgdts)
+
     n_image = len(day)
+    n_ifg = len(ifgs)
+
+    master_ix = np.sum(day < master_day)
+    if day[master_ix] != master_day:
+        log(
+            f"Master date {rslcpar.name[:8]} == {master_day} not found in interferogram dates, inserting at index {master_ix}"
+        )
+        day = np.insert(day, master_ix, master_day)
 
     log(f"{day = }")
     log(f"{master_ix = }")
     log(f"{n_ifg = }")
-
-    # Save interferogram dates
-    np.savetxt("../small_baselines.list", ifgday, fmt="%s")
 
     # Set and save heading parameter
     heading = readparm(rslcpar, "heading")
@@ -307,13 +339,15 @@ def load_initial_gamma(endian: str = "b") -> None:
 
     # Processing of the id, azimuth, range data
     with ijname.open("rb") as f:
-        ij = np.loadtxt(f, dtype=np.int32)
+        ij = np.loadtxt(f, dtype=np.uint16)
+
+    stamps_save("ij", ij)
 
     n_ps = len(ij)
 
     # Processing of the longitude and latitude data
     with llname.open("rb") as f:
-        lonlat = np.fromfile(f, dtype=">f4").reshape((-1, 2))
+        lonlat = np.fromfile(f, dtype=">f4").reshape((-1, 2)).astype(np.float64)
 
     # Processing of the Height data
     if hgtname.exists():
@@ -357,7 +391,7 @@ def load_initial_gamma(endian: str = "b") -> None:
     # Processing of the phase data
     with phname.open("rb") as f:
         log(f"Loading phase data from `{phname.absolute()}`")
-        ph = np.fromfile(f, dtype='>c8').reshape((n_ifg, n_ps)).T
+        ph = np.fromfile(f, dtype=">c8").reshape((n_ifg, n_ps)).T
 
     mu = np.mean(ph, axis=0)
     for i in range(n_ifg):
@@ -377,8 +411,6 @@ def load_initial_gamma(endian: str = "b") -> None:
 
     # Convert to local coordinates and scale to meters
     xy = llh2local(lonlat.T, ll0).T * 1000
-
-    breakpoint()
 
     # Sort coordinates by x and y
     sort_x = xy[np.argsort(xy[:, 0])]
@@ -410,31 +442,37 @@ def load_initial_gamma(endian: str = "b") -> None:
     xynew = rotm @ xy
 
     # Check if rotation improves alignment and apply if it does
-    if (np.max(xynew[0]) - np.min(xynew[0]) < np.max(xy[0]) - np.min(xy[0])) and \
-       (np.max(xynew[1]) - np.min(xynew[1]) < np.max(xy[1]) - np.min(xy[1])):
+    if (np.max(xynew[0]) - np.min(xynew[0]) < np.max(xy[0]) - np.min(xy[0])) and (
+        np.max(xynew[1]) - np.min(xynew[1]) < np.max(xy[1]) - np.min(xy[1])
+    ):
         log(f"Rotation improved alignment, applying a rotation of {theta * 180 / np.pi:.2f} degrees")
-        xy = xynew.T.astype(np.float32)
-
-    breakpoint()
+        xy = xynew.T
 
     # Sort xy in ascending y, then x order and apply sort index to other arrays
     sort_ix = np.lexsort((xy[:, 0], xy[:, 1]))
+    stamps_save("sort_ix", sort_ix)
+
     xy = xy[sort_ix]
     ph = ph[sort_ix]
     lonlat = lonlat[sort_ix]
     bperp_mat = bperp_mat[sort_ix]
     la = inci[sort_ix]
+
+    # Sort and update ij with new point IDs
     ij = ij[sort_ix]
+    ij[:, 0] = np.arange(1, n_ps + 1)
 
-    # Update ij with new point IDs and round xy to nearest mm
-    ij[:, 0] = np.arange(1, n_ps+1)
-
-    breakpoint()
-    
-    xy = np.insert(xy, 0, np.arange(1, n_ps+1), axis=1)
+    # Round xy to nearest mm
+    xy = np.insert(xy, 0, np.arange(1, n_ps + 1), axis=1)
     xy[:, 1:] = np.round(xy[:, 1:] * 1000) / 1000
 
-    breakpoint()
+    with daname.open("rb") as f:
+        D_A = np.loadtxt(f)
+    D_A = D_A[sort_ix]
+
+    with hgtname.open("rb") as f:
+        hgt = np.loadtxt(f, usecols=2)
+    hgt = hgt[sort_ix]
 
     psver = 1
 
@@ -444,11 +482,9 @@ def load_initial_gamma(endian: str = "b") -> None:
         lonlat=lonlat,
         xy=xy,
         bperp=bperp,
-        day=ifgday,
+        day=day,
         master_day=master_day,
         master_ix=master_ix,
-        ifgday=ifgday,
-        ifgday_ix=ifgday_ix,
         n_ifg=n_ifg,
         n_image=n_image,
         n_ps=n_ps,
@@ -458,9 +494,11 @@ def load_initial_gamma(endian: str = "b") -> None:
         mean_range=mean_range,
     )
 
-    stamps_save(f"ph{psver}.pkl", ph)
-    stamps_save(f"bp{psver}.pkl", bperp_mat)
-    stamps_save(f"la{psver}.pkl", la)
+    stamps_save(f"ph{psver}", ph)
+    stamps_save(f"bp{psver}", bperp_mat)
+    stamps_save(f"la{psver}", la)
+    stamps_save(f"da{psver}", D_A)
+    stamps_save(f"hgt{psver}", hgt)
 
 
 def clap_filt(ph, alpha=0.5, beta=0.1, n_win=32, n_pad=0, low_pass=None):
@@ -734,9 +772,7 @@ def estimate_coherence(max_iters=1000) -> None:
     xy = ps.xy
     master_ix = ps.master_ix
 
-    breakpoint()
-
-    inc_mean = ps.mean_incidence + np.deg2rad(3) # StaMPS hardcoded value (3 deg)
+    inc_mean = ps.mean_incidence + np.deg2rad(3)  # StaMPS hardcoded value (3 deg)
 
     # CLAP filter parameters
     grid_size = getparm("filter_grid_size")
@@ -785,8 +821,8 @@ def estimate_coherence(max_iters=1000) -> None:
     good_ix = np.ones(ps.n_ps, dtype=bool)
     good_ix[null_i] = False
 
-    if (small_baseline_flag.lower() == "n"):
-        keep_ix = list(range(master_ix)) + list(range(master_ix+1, n_ifg))
+    if small_baseline_flag.lower() == "n":
+        keep_ix = list(range(master_ix)) + list(range(master_ix + 1, n_ifg))
         ph = ph[:, keep_ix]
         bperp = bperp[keep_ix]
         n_ifg = n_ifg - 1
@@ -846,10 +882,10 @@ def estimate_coherence(max_iters=1000) -> None:
     ph_patch = np.zeros_like(ph, dtype=np.float32)
     N_patch = np.zeros(n_ps)
 
-    #grid_offset_x = np.min(xy[:, 2]) - 1e-6
-    #grid_offset_y = np.min(xy[:, 1]) - 1e-6
-    #grid_ij = np.ceil((xy[:, 2:0:-1] - [grid_offset_x, grid_offset_y]) / grid_size).astype(int) - 1
-    #grid_ij = np.clip(grid_ij, 0, np.max(grid_ij, axis=0) - 1)  # Ensure indices are within bounds
+    # grid_offset_x = np.min(xy[:, 2]) - 1e-6
+    # grid_offset_y = np.min(xy[:, 1]) - 1e-6
+    # grid_ij = np.ceil((xy[:, 2:0:-1] - [grid_offset_x, grid_offset_y]) / grid_size).astype(int) - 1
+    # grid_ij = np.clip(grid_ij, 0, np.max(grid_ij, axis=0) - 1)  # Ensure indices are within bounds
 
     grid_ij[:, 0] = np.ceil((xy[:, 2] - np.min(xy[:, 2]) + 1e-6) / grid_size).astype(int)
     grid_ij[grid_ij[:, 0] == np.max(grid_ij[:, 0]), 0] = np.max(grid_ij[:, 0]) - 1
@@ -942,6 +978,95 @@ def estimate_coherence(max_iters=1000) -> None:
         coh_ps_save = coh_ps.copy()
 
 
+def results_equal(name: str, is_idx=False, atol=1e-8, rtol=1e-8, equal_nan=True) -> bool:
+    """Check if the results of the current run match the expected results."""
+
+    python = stamps_load(name)
+    matlab = loadmat(f"{name}.mat")
+
+    if name.endswith("1"):
+        name = name[:-1]
+
+    ndiff = 0
+
+    def compare_array(x, y) -> bool:
+        print(f"{x.dtype=} vs {y.dtype=}")
+        print(f"{x.shape=} vs {y.shape=}")
+        print(f"Python:\n{x}")
+        print(f"MATLAB:\n{y}")
+        diff = np.abs(x - y)
+        print(f"Count of differences: {np.sum(diff > 1e-5)}")
+        ix = np.unravel_index(np.argmax(diff), diff.shape)
+        print(f"Location of max difference: {ix}")
+        print(f"Python value: {x[ix]}")
+        print(f"MATLAB value: {y[ix]}")
+        if x.shape == y.shape:
+            # print out values from equivalent columns next to each other
+            nprinted = 0
+            for i in range(x.shape[0]):
+                if np.allclose(x[i], y[i], rtol=rtol, atol=atol, equal_nan=equal_nan):
+                    continue
+                nprinted += 1
+                print(f"Row {i}:\t{x[i]}\t{y[i]}")
+                if nprinted > 10:
+                    break
+        print(f"Location of max difference: {ix}")
+        print("")
+
+    if isinstance(python, np.ndarray):
+        if isinstance(matlab, dict):
+            try:
+                if len(matlab.keys()) == 1:
+                    matlab = matlab[list(matlab.keys())[0]]
+                else:
+                    matlab = matlab[name]
+            except KeyError:
+                print(f"Unknown key `{name}`, debugging...")
+                breakpoint()
+        if is_idx:
+            matlab = matlab - 1
+        if not np.allclose(python, matlab, rtol=rtol, atol=atol, equal_nan=equal_nan):
+            print(f"\nError: `{name}` does not match")
+            compare_array(python, matlab)
+            return False
+        else:
+            print(f"`{name}` matches. {python.dtype=} {matlab.dtype=}. {atol=}, {rtol=}")
+            return True
+
+    for key in python:
+        if "ix" in key:
+            log(f"`{key}` check skipped")
+            continue
+        if key in matlab:
+            if isinstance(python[key], np.ndarray):
+                if not np.allclose(python[key], matlab[key], rtol=rtol, atol=atol, equal_nan=equal_nan):
+                    print(f"\nError: `{key}` does not match")
+                    compare_array(python[key], matlab[key])
+                    ndiff += 1
+                else:
+                    print(f"`{key}` matches with {atol = } and {rtol = }")
+            else:
+                if abs(python[key] - matlab[key]) > atol:
+                    print(f"\nError: `{key}` does not match")
+                    print(f"Python: {python[key]}")
+                    print(f"MATLAB: {matlab[key]}")
+                    print("")
+                    ndiff += 1
+                else:
+                    print(f"`{key}` matches with {atol = } and {rtol = }")
+
+    if ndiff > 0:
+        breakpoint()
+
+    return ndiff == 0
+
+
+def check(name, x, atol=1e-8, rtol=1e-8):
+    stamps_save(name, x)
+    assert results_equal(name, atol=atol, rtol=rtol)
+    sys.exit(0)
+
+
 def test_getparm() -> None:
     """Test the getparm function."""
     getparm()
@@ -952,7 +1077,14 @@ def test_load_initial_gamma() -> None:
     new = patchdirs()[0]
     os.chdir(new)
     load_initial_gamma()
+    assert results_equal("ps1")
+    assert results_equal("ph1")
+    assert results_equal("bp1")
+    assert results_equal("la1")
+    assert results_equal("da1")
+    assert results_equal("hgt1")
     os.chdir(cwd)
+
 
 def test_estimate_coherence() -> None:
     cwd = Path.cwd()
@@ -961,6 +1093,7 @@ def test_estimate_coherence() -> None:
     estimate_coherence()
     os.chdir(cwd)
 
+
 if __name__ == "__main__":
     test_load_initial_gamma()
-    test_estimate_coherence()
+    # test_estimate_coherence()
