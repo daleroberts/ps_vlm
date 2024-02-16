@@ -52,9 +52,9 @@ else
     low_coh_thresh=31; % equivalent to coh of 31/100
 end
 
-freq0=1/low_pass_wavelength;
-freq_i=-(n_win)/grid_size/n_win/2:1/grid_size/n_win:(n_win-2)/grid_size/n_win/2;
-butter_i=1./(1+(freq_i/freq0).^(2*5));
+freq0=1/double(low_pass_wavelength);
+freq_i=-double(n_win)/double(grid_size)/double(n_win)/2:1/double(grid_size)/double(n_win):double(n_win-2)/double(grid_size)/double(n_win)/2;
+butter_i=double(1./(1+(double(freq_i)/freq0).^(2*5)));
 low_pass=butter_i'*butter_i;
 low_pass=fftshift(low_pass);
 
@@ -80,6 +80,7 @@ else
 end
 
 if exist([phname,'.mat'],'file')
+    fprintf("Loading phases from %s\n", phname);
     phin=load(phname);
     ph=phin.ph;
     clear phin
@@ -113,6 +114,8 @@ A=single(A);
 A(A==0)=1; % avoid divide by zero
 ph=ph./A;
 
+save 'nph.mat' ph
+
 %%% ===============================================
 %%% The code below needs to be made sensor specific
 %%% ===============================================
@@ -131,14 +134,16 @@ else
         inc_mean=21*pi/180; % guess the incidence angle
     end
 end
-max_K=max_topo_err/(lambda*rho*sin(inc_mean)/4/pi);
+max_K=double(max_topo_err)/(lambda*rho*sin(inc_mean)/4/pi);
 %%% ===============================================
 %%% The code above needs to be made sensor specific
 %%% ===============================================
 
-bperp_range=max(bperp)-min(bperp);
-n_trial_wraps=(bperp_range*max_K/(2*pi));
+bperp_range=double(max(bperp)-min(bperp));
+n_trial_wraps=double(bperp_range*max_K/(2*pi));
 logit(sprintf('n_trial_wraps=%f',n_trial_wraps))
+
+stamps_save('ec1.mat', max_K, bperp_range, n_trial_wraps, max_topo_err, lambda, rho, inc_mean);
 
 if restart_flag > 0
     %disp(['Restarting: iteration #',num2str(i_loop),' step_number=',num2str(step_number)])
@@ -164,10 +169,14 @@ else
          rand_ifg=2*pi*rand(n_rand, n_ifg);
     end
 
+    save 'rand_ifg.mat' rand_ifg
+
     for i=n_rand:-1:1      
         [K_r,C_r,coh_r]=ps_topofit(exp(j*rand_ifg(i,:)),bperp,n_trial_wraps,doplots);
         coh_rand(i)=coh_r(1);
     end
+
+    save 'coh_rand.mat' coh_rand
 
     clear rand_ifg
 
@@ -189,9 +198,9 @@ else
     ph_res=zeros(n_ps,n_ifg,'single');
     ph_patch=zeros(size(ph),'single');
     N_patch=zeros(n_ps,1);
-    grid_ij(:,1)=ceil((xy(:,3)-min(xy(:,3))+1e-6)/grid_size);
+    grid_ij(:,1)=ceil((xy(:,3)-min(xy(:,3))+1e-6)/double(grid_size));
     grid_ij(grid_ij(:,1)==max(grid_ij(:,1)),1)=max(grid_ij(:,1))-1;
-    grid_ij(:,2)=ceil((xy(:,2)-min(xy(:,2))+1e-6)/grid_size);
+    grid_ij(:,2)=ceil((xy(:,2)-min(xy(:,2))+1e-6)/double(grid_size));
     grid_ij(grid_ij(:,2)==max(grid_ij(:,2)),2)=max(grid_ij(:,2))-1;
     i_loop=1;
     weighting=1./D_A; 
@@ -203,8 +212,9 @@ end
 n_i=max(grid_ij(:,1));
 n_j=max(grid_ij(:,2));
 
+save 'grid_ij.mat' grid_ij
 
-logit(sprintf('%d PS candidates to process',n_ps))
+logit(sprintf('%d PS candidates to process',n_ps));
 xy(:,1)=[1:n_ps]'; % assumption that already sorted in ascending column 3 (y-axis) order
 loop_end_sw=0;
 n_high_save=0;
@@ -222,6 +232,10 @@ while loop_end_sw==0
         %ph_grid(grid_ij(i,1),grid_ij(i,2),:)=ph_grid(grid_ij(i,1),grid_ij(i,2),:)+shiftdim(ph(i,:),-1)*weighting(i);
         ph_grid(grid_ij(i,1),grid_ij(i,2),:)=ph_grid(grid_ij(i,1),grid_ij(i,2),:)+shiftdim(ph_weight(i,:),-1);
     end
+
+    save 'ph_grid.mat' ph_grid
+
+    fprintf('end');
     
     for i=1:n_ifg
         ph_filt(:,:,i)=clap_filt(ph_grid(:,:,i),clap_alpha,clap_beta,n_win*0.75,n_win*0.25,low_pass);
