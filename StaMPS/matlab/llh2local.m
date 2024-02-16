@@ -23,6 +23,16 @@ function xy=llh2local(llh,origin)
 %
 %-------------------------------------------------------------
 
+% [~,n] = size(llh);
+% xy = zeros(2, n, 'double');
+% for i = 1:n
+%     [x,y,z] = geodetic2enu(llh(2,i),llh(1,i),0,origin(2),origin(1),0,wgs84Ellipsoid);
+%     xy(1,i) = x;
+%     xy(2,i) = y;
+% end
+% xy = xy / 1000;
+% return
+
 %Set ellipsoid constants (WGS84)
 
    a=6378137.0;
