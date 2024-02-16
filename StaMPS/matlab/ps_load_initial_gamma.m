@@ -48,18 +48,27 @@ function [] = ps_load_initial_gamma(endian)
     n_image = n_ifg;
     day = zeros(n_ifg, 1);
     for i = 1:n_ifg
-        day(i) = str2num(ifgs{i}(nb - 12:nb - 5));
+        % day(i) = str2num(ifgs{i}(nb - 12:nb - 5));
+        year = str2num(ifgs{i}(end-12:end-9));
+        month = str2num(ifgs{i}(end-8:end-7));
+        monthday = str2num(ifgs{i}(end-6:end-5));
+        day(i) = datenum(year, month, monthday);
     end
 
-    year = floor(day / 10000);
-    month = floor((day - year * 10000) / 100);
-    monthday = day - year * 10000 - month * 100;
-    day = datenum(year, month, monthday);
+    % year = floor(day / 10000);
+    % month = floor((day - year * 10000) / 100);
+    % monthday = day - year * 10000 - month * 100;
+    % day = datenum(year, month, monthday);
 
     master_day_yyyymmdd = master_day;
-    year = floor(master_day / 10000);
-    month = floor((master_day - year * 10000) / 100);
-    monthday = master_day - year * 10000 - month * 100;
+    
+    % year = floor(master_day / 10000);
+    % month = floor((master_day - year * 10000) / 100);
+    % monthday = master_day - year * 10000 - month * 100;
+    master_day = ifgs{1}(nb - 21:nb - 14);
+    year = str2num(master_day(1:4));
+    month = str2num(master_day(5:6));
+    monthday = str2num(master_day(7:8));
     master_day = datenum(year, month, monthday);
 
     master_ix = sum(day < master_day) + 1;
@@ -88,6 +97,8 @@ function [] = ps_load_initial_gamma(endian)
     ij = load(ijname);
     n_ps = size(ij, 1);
 
+    stamps_save('ij', ij);
+
     rps = readparm(rslcpar, 'range_pixel_spacing');
     rgn = readparm(rslcpar, 'near_range_slc');
     se = readparm(rslcpar, 'sar_to_earth_center');
@@ -101,7 +112,7 @@ function [] = ps_load_initial_gamma(endian)
     rg = rgn + ij(:, 3) * rps;
     look = acos((se^2 + rg.^2 - re^2) ./ (2 * se * rg)); % Satellite look angles
 
-    bperp_mat = zeros(n_ps, n_image, 'single');
+    bperp_mat = zeros(n_ps, n_image, 'double');
     for i = 1:n_ifg
         basename = [ifgs{i}(1:nb - 4), 'base'];
         B_TCN = readparm(basename, 'initial_baseline(TCN):', 3);
@@ -181,17 +192,20 @@ function [] = ps_load_initial_gamma(endian)
     end
 
     rotm = [cos(theta), sin(theta); -sin(theta), cos(theta)];
+
     xy = xy';
+
     xynew = rotm * xy; % rotate so that scene axes approx align with x=0 and y=0
-    if max(xynew(1, :)) - min(xynew(1, :)) < max(xy(1, :)) - min(xy(1, :)) && ...
-       max(xynew(2, :)) - min(xynew(2, :)) < max(xy(2, :)) - min(xy(2, :))
+    if (max(xynew(1, :)) - min(xynew(1, :)) < max(xy(1, :)) - min(xy(1, :))) && ...
+       (max(xynew(2, :)) - min(xynew(2, :)) < max(xy(2, :)) - min(xy(2, :)))
         xy = xynew; % check that rotation is an improvement
         disp(['Rotating by ', num2str(theta * 180 / pi), ' degrees']);
     end
 
-    xy = single(xy');
+    xy = double(xy');
     [~, sort_ix] = sortrows(xy, [2, 1]); % sort in ascending y order
     xy = xy(sort_ix, :);
+
     xy = [[1:n_ps]', xy];
     xy(:, 2:3) = round(xy(:, 2:3) * 1000) / 1000; % round to mm
 
@@ -231,15 +245,18 @@ function [] = ps_load_initial_gamma(endian)
     end
 
     if exist(hgtname, 'file')
-        fid = fopen(hgtname, 'r');
-        hgt = fread(fid, [1, inf], 'float', endian);
+        % fid = fopen(hgtname, 'r');
+        % hgt = fread(fid, [1, inf], 'float', endian);
+        hgt = load(hgtname);
+        hgt = hgt(:,3);
         hgt = hgt';
         hgt = hgt(sort_ix);
-        fclose(fid);
+        %fclose(fid);
         hgtsavename = ['hgt', num2str(psver)];
         %    save(hgtsavename,'hgt');
         stamps_save(hgtsavename, hgt);
     end
 
     logit(1);
+    
 end
