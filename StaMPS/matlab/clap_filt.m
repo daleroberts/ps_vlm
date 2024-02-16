@@ -75,12 +75,12 @@ for ix1=1:n_win_i
         if meanH~=0
             H=H/meanH;
         end
-        H=H.^alpha;
+        H=double(H).^double(alpha);
         H=H-1; % set all values under median to zero
         H(H<0)=0; % set all values under median to zero
         G=H*beta+low_pass;
         ph_filt=ifft2(ph_fft.*G);
-        ph_filt=ph_filt(1:n_win,1:n_win).*wf2;
+        ph_filt=ph_filt(1:n_win,1:n_win) .* double(wf2);
         if isnan(ph_filt(1,1))
             keyboard
         end
