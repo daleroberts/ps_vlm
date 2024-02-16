@@ -66,6 +66,24 @@ def stamps_load(fn: str) -> Any:
     return load(fn)
 
 
+def loadmat(fname: Path) -> Any:
+    """Loads a .mat file."""
+
+    mat = sio.loadmat(str(fname), squeeze_me=True)
+    kvs = {k: v for k, v in mat.items() if not k.startswith("__")}
+
+    for k in kvs.keys():
+        try:
+            v = kvs[k]
+            if isinstance(v, np.ndarray) and v.size == 1:
+                v = v.flat[0]
+        except IndexError:
+            pass
+        kvs[k] = v
+
+    return kvs
+
+
 def llh2local_alternate(llh, origin):
     """
     Converts from longitude and latitude to local coordinates given an origin.
@@ -139,23 +157,6 @@ def llh2local(llh, origin):
 
     return xy
 
-
-def loadmat(fname: Path) -> Any:
-    """Loads a .mat file."""
-
-    mat = sio.loadmat(str(fname), squeeze_me=True)
-    kvs = {k: v for k, v in mat.items() if not k.startswith("__")}
-
-    for k in kvs.keys():
-        try:
-            v = kvs[k]
-            if isinstance(v, np.ndarray) and v.size == 1:
-                v = v.flat[0]
-        except IndexError:
-            pass
-        kvs[k] = v
-
-    return kvs
 
 
 def getparm(parmname: Optional[str] = None, verbose: bool = False) -> Tuple[Optional[Any], Optional[str]]:
@@ -763,8 +764,9 @@ def estimate_coherence(max_iters=1000) -> None:
     ph = stamps_load("ph1")
     bp = stamps_load("bp1")
     la = stamps_load("la1")
+    da = stamps_load("da1")
 
-    bperp = ps.bperp
+    bperp_mat = ps.bperp
     n_ifg = ps.n_ifg
     n_image = ps.n_image
     n_ps = ps.n_ps
@@ -772,7 +774,8 @@ def estimate_coherence(max_iters=1000) -> None:
     xy = ps.xy
     master_ix = ps.master_ix
 
-    inc_mean = ps.mean_incidence + np.deg2rad(3)  # StaMPS hardcoded value (3 deg)
+    #inc_mean = ps.mean_incidence + np.deg2rad(3)
+    inc_mean = ps.mean_incidence + 0.052 # StaMPS hardcoded value (approx 3 deg)
 
     # CLAP filter parameters
     grid_size = getparm("filter_grid_size")
@@ -824,7 +827,7 @@ def estimate_coherence(max_iters=1000) -> None:
     if small_baseline_flag.lower() == "n":
         keep_ix = list(range(master_ix)) + list(range(master_ix + 1, n_ifg))
         ph = ph[:, keep_ix]
-        bperp = bperp[keep_ix]
+        bperp_mat = bperp_mat[keep_ix]
         n_ifg = n_ifg - 1
         n_image = n_image - 1
 
@@ -833,14 +836,18 @@ def estimate_coherence(max_iters=1000) -> None:
     A[A == 0] = 1  # Avoid divide by zero
     ph /= A
 
-    # Calculate the maximum baseline length (max_K) that can be tolerated for a
-    # given topographic error (max_topo_err) considering the wavelength (lambda_) of the radar,
-    # the spatial baseline decorrelation coefficient (rho), and the mean incidence angle (inc_mean) of radar signal
+    check("nph", ph, atol=1e-6, rtol=1e-6)
+
+    # Calculate the maximum baseline length (max_K) that can be tolerated for a given topographic 
+    # error (max_topo_err) considering the wavelength (lambda_) of the radar, the spatial baseline
+    # decorrelation coefficient (rho), and the mean incidence angle (inc_mean) of radar signal
     max_K = max_topo_err / (lambda_ * rho * np.sin(inc_mean) / (4 * np.pi))
 
-    bperp_range = np.max(bperp) - np.min(bperp)
+    bperp_range = np.max(bperp_mat) - np.min(bperp_mat)
     n_trial_wraps = bperp_range * max_K / (2 * np.pi)
-    log(f"n_trial_wraps={n_trial_wraps}")
+    log(f"{n_trial_wraps = }")
+
+    check("ec1", {"max_K": max_K, "max_topo_err": max_topo_err, "lambda": lambda_, "rho": rho, "inc_mean": inc_mean, "bperp_range": bperp_range, "n_trial_wraps": n_trial_wraps})
 
     if small_baseline_flag.lower() == "y":
         # Generate random phase values for each pixel in each image, scaled by 2*pi
@@ -860,6 +867,9 @@ def estimate_coherence(max_iters=1000) -> None:
         # This simulates random phase components in interferograms without considering individual images
         rand_ifg = 2 * np.pi * np.random.rand(n_rand, n_ifg)
 
+    rand_ifg = loadmat("rand_ifg.mat")['rand_ifg']
+    check("rand_ifg", rand_ifg)
+
     # Pre-compute complex exponential of random interferograms to avoid recalculating in each iteration
     exp_rand_ifg = np.exp(1j * rand_ifg)
 
@@ -867,9 +877,11 @@ def estimate_coherence(max_iters=1000) -> None:
     coh_rand = np.zeros(n_rand)
     for i in reversed(range(n_rand)):
         # Fit a topographic phase model to each random phase point
-        K_r, C_r, coh_r, res_r = topofit(exp_rand_ifg[i, :], bperp, n_trial_wraps)
+        K_r, C_r, coh_r, res_r = topofit(exp_rand_ifg[i, :], bperp_mat, n_trial_wraps)
         # Store the first coherence value for each random point
         coh_rand[i] = coh_r
+
+    check("coh_rand", coh_rand)
 
     coh_bins = np.arange(0.005, 0.995, 0.01)
     Nr, _ = np.histogram(coh_rand, bins=coh_bins)
@@ -882,18 +894,25 @@ def estimate_coherence(max_iters=1000) -> None:
     ph_patch = np.zeros_like(ph, dtype=np.float32)
     N_patch = np.zeros(n_ps)
 
-    # grid_offset_x = np.min(xy[:, 2]) - 1e-6
-    # grid_offset_y = np.min(xy[:, 1]) - 1e-6
-    # grid_ij = np.ceil((xy[:, 2:0:-1] - [grid_offset_x, grid_offset_y]) / grid_size).astype(int) - 1
-    # grid_ij = np.clip(grid_ij, 0, np.max(grid_ij, axis=0) - 1)  # Ensure indices are within bounds
-
+    # Calculate grid indices for the third column of 'xy'
+    grid_ij = np.zeros((xy.shape[0], 2), dtype=int)
     grid_ij[:, 0] = np.ceil((xy[:, 2] - np.min(xy[:, 2]) + 1e-6) / grid_size).astype(int)
+    # Adjust indices to ensure they are within bounds for the first column
     grid_ij[grid_ij[:, 0] == np.max(grid_ij[:, 0]), 0] = np.max(grid_ij[:, 0]) - 1
+    # Calculate grid indices for the second column of 'xy'
     grid_ij[:, 1] = np.ceil((xy[:, 1] - np.min(xy[:, 1]) + 1e-6) / grid_size).astype(int)
+    # Adjust indices to ensure they are within bounds for the second column
     grid_ij[grid_ij[:, 1] == np.max(grid_ij[:, 1]), 1] = np.max(grid_ij[:, 1]) - 1
 
+    grid_ij -= 1  # Adjust indices to start from 0
+
+    n_i = np.max(grid_ij[:,0]) + 1
+    n_j = np.max(grid_ij[:,1]) + 1
+
+    check("grid_ij", grid_ij, is_idx=True)
+
     i_loop = 1  # Initialize loop counter
-    weighting = 1.0 / D_A
+    weighting = 1.0 / da
     weighting_save = weighting.copy()
     gamma_change_save = 0
 
@@ -901,15 +920,17 @@ def estimate_coherence(max_iters=1000) -> None:
         log(f"Iteration #{i}, calculating patch phases...")
 
         # Initialize phase grids for raw phases, filtered phases, and weighted phases
-        ph_grid = np.zeros((n_i, n_j, n_ifg), dtype=np.float32)
+        ph_grid = np.zeros((n_i, n_j, n_ifg), dtype=np.complex128)
         ph_filt = np.copy(ph_grid)  # Copy ph_grid structure for filtered phases
 
         # Calculate weighted phases, adjusting for baseline and applying weights
-        ph_weight = ph * np.exp(-1j * bp.bperp_mat * K_ps[:, None]) * weighting[:, None]
+        ph_weight = (ph * np.exp(-1j * bperp_mat * K_ps[:, None]) * weighting[:, None])
 
         # Accumulate weighted phases into grid cells
         for i in range(n_ps):
-            ph_grid[grid_ij[i, 0], grid_ij[i, 1], :] += np.expand_dims(ph_weight[i, :], axis=0)
+            ph_grid[grid_ij[i, 0], grid_ij[i, 1], :] = ph_grid[grid_ij[i, 0], grid_ij[i, 1], :] + ph_weight[i, :]
+
+        check("ph_grid", ph_grid, exit=True)
 
         # Apply filtering to each interferogram in the grid
         for i in range(n_ifg):
@@ -944,7 +965,7 @@ def estimate_coherence(max_iters=1000) -> None:
             # Check if there's a non-null value in every interferogram
             if np.all(psdph != 0):
                 # Fit the topographic phase model to the phase difference
-                Kopt, Copt, cohopt, ph_residual = topofit(psdph, bp.bperp_mat[i, :].reshape(-1, 1), n_trial_wraps)
+                Kopt, Copt, cohopt, ph_residual = topofit(psdph, bperp_mat[i, :].reshape(-1, 1), n_trial_wraps)
 
                 # Store the results
                 K_ps[i] = Kopt[0]
@@ -976,6 +997,28 @@ def estimate_coherence(max_iters=1000) -> None:
         # Save the current values for comparison in the next iteration
         gamma_change_save = gamma_change_rms
         coh_ps_save = coh_ps.copy()
+
+    stamps_save("pm1",
+                ph_patch=ph_patch,
+                K_ps=K_ps,
+                C_ps=C_ps,
+                coh_ps=coh_ps,
+                N_opt=N_opt,
+                ph_res=ph_res,
+                # step_number=step_number,
+                ph_grid=ph_grid,
+                n_trial_wraps=n_trial_wraps,
+                grid_ij=grid_ij,
+                grid_size=grid_size,
+                low_pass=low_pass,
+                i_loop=i_loop,
+                # ph_weight=ph_weight,
+                #Nr=Nr,
+                #Nr_max_nz_ix=Nr_max_nz_ix,
+                #coh_bins=coh_bins,
+                #coh_ps_save=coh_ps_save,
+                #gamma_change_save=gamma_change_save,
+                )
 
 
 def results_equal(name: str, is_idx=False, atol=1e-8, rtol=1e-8, equal_nan=True) -> bool:
@@ -1061,11 +1104,14 @@ def results_equal(name: str, is_idx=False, atol=1e-8, rtol=1e-8, equal_nan=True)
     return ndiff == 0
 
 
-def check(name, x, atol=1e-8, rtol=1e-8):
-    stamps_save(name, x)
-    assert results_equal(name, atol=atol, rtol=rtol)
-    sys.exit(0)
-
+def check(name, x, is_idx=False, atol=1e-6, rtol=1e-6, exit=False) -> None:
+    if isinstance(x, dict):
+        stamps_save(name, **x)
+    else:
+        stamps_save(name, x)
+    assert results_equal(name, is_idx=is_idx, atol=atol, rtol=rtol)
+    if exit:
+        sys.exit(0)
 
 def test_getparm() -> None:
     """Test the getparm function."""
@@ -1095,5 +1141,5 @@ def test_estimate_coherence() -> None:
 
 
 if __name__ == "__main__":
-    test_load_initial_gamma()
-    # test_estimate_coherence()
+    #test_load_initial_gamma()
+    test_estimate_coherence()
