@@ -135,6 +135,7 @@ def results_equal(
         print("")
         if DEBUG:
             import pdb
+
             pdb.set_trace()
 
     if isinstance(python, np.ndarray):
@@ -148,14 +149,17 @@ def results_equal(
                 print(f"Unknown key `{name}`, debugging...")
                 if DEBUG:
                     import pdb
+
                     pdb.set_trace()
 
         assert isinstance(matlab, np.ndarray)
         if is_idx:
             matlab = matlab - 1
         if python.shape != matlab.shape:
-            print(f"\nError: `{name}` does not match (shape mismatch) "
-                  f"{python.shape=} {matlab.shape=}")
+            print(
+                f"\nError: `{name}` does not match (shape mismatch) "
+                f"{python.shape=} {matlab.shape=}"
+            )
             compare_array(python, matlab)
             return False
         if not np.allclose(python, matlab, rtol=rtol, atol=atol, equal_nan=equal_nan):
@@ -205,8 +209,11 @@ def results_equal(
                 else:
                     log(f"`{key}` matches")
             else:
-                if abs(python[key] - matlab[key]) > atol:
-                    print(f"\nError: `{key}` does not match")
+                print(f"{type(python[key])=} {type(matlab[key])=}")
+                if np.abs(python[key] - matlab[key]) > atol:
+                    print(
+                        f"\nError: `{key}` does not match. {type(python[key])=} {type(matlab[key])=}"
+                    )
                     print(f"Python: {python[key]}")
                     print(f"MATLAB: {matlab[key]}")
                     print("")
@@ -862,73 +869,73 @@ def goldstein_filt(
     return ph_out
 
 
-# def gradient_filt(
-#   ph: np.ndarray, n_win: int
-# ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-#   """
-#   Determine 2-D gradient through FFT over windows of size n_win.
-#   """
-#
-#   # Initialize variables
-#   n_i, n_j = ph.shape
-#   n_inc = n_win // 4
-#   n_win_i = -(-n_i // n_inc) - 3  # Ceiling division
-#   n_win_j = -(-n_j // n_inc) - 3
-#
-#   # Replace NaNs with zeros
-#   ph = np.nan_to_num(ph)
-#
-#   # Initialize output arrays
-#   Hmag = np.full((n_win_i, n_win_j), np.nan)
-#   ifreq = Hmag.copy()
-#   jfreq = Hmag.copy()
-#   ij = np.full((n_win_i * n_win_j, 2), np.nan)
-#
-#   def calc_bounds(
-#       ix: int, n_inc: int, n_win: int, max_dim: int
-#   ) -> Tuple[int, int, int, int]:
-#       i1 = ix * n_inc
-#       i2 = min(i1 + n_win, max_dim)
-#       return max(i2 - n_win, 0), i2
-#
-#   def calc_freq(I1: Array, I2: Array, n_win: int) -> Tuple[Array, Array]:
-#       I1 = (I1 + n_win // 2) % n_win
-#       I2 = (I2 + n_win // 2) % n_win
-#       return (
-#           (I1 - n_win // 2) * 2 * np.pi / n_win,
-#           (I2 - n_win // 2) * -2 * np.pi / n_win,
-#       )
-#
-#   idx = 0
-#   for ix1 in range(n_win_i):
-#       for ix2 in range(n_win_j):
-#           # Calculate window bounds
-#           i1, i2, j1, j2 = calc_bounds(ix1, ix2, n_inc, n_win, n_i, n_j)
-#
-#           # Extract phase window and apply FFT
-#           ph_bit = ph[i1:i2, j1:j2]
-#           if np.count_nonzero(ph_bit) < 6:  # Check for enough non-zero points
-#               continue
-#
-#           ph_fft = np.fft.fft2(ph_bit)
-#           H = np.abs(ph_fft)
-#
-#           # Find the index of the maximum magnitude
-#           I = np.argmax(H)
-#           Hmag_this = H.flat[I] / H.mean()
-#
-#           # Calculate frequencies
-#           I1, I2 = np.unravel_index(I, (n_win, n_win))
-#           ifreq_val, jfreq_val = calc_freq(I1, I2, n_win)
-#
-#           # Update output arrays
-#           Hmag[ix1, ix2] = Hmag_this
-#           ifreq[ix1, ix2] = ifreq_val
-#           jfreq[ix1, ix2] = jfreq_val
-#           ij[idx] = [(i1 + i2) / 2, (j1 + j2) / 2]
-#           idx += 1
-#
-#   return ifreq.T, jfreq.T, ij, Hmag.T
+def gradient_filt(
+    ph: np.ndarray, n_win: int
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Determine 2-D gradient through FFT over windows of size n_win.
+    """
+
+    raise NotImplementedError("This function has not been verified yet.")
+
+    # Initialize variables
+    n_i, n_j = ph.shape
+    n_inc = n_win // 4
+    n_win_i = -(-n_i // n_inc) - 3  # Ceiling division
+    n_win_j = -(-n_j // n_inc) - 3
+
+    # Replace NaNs with zeros
+    ph = np.nan_to_num(ph)
+
+    # Initialize output arrays
+    Hmag = np.full((n_win_i, n_win_j), np.nan)
+    ifreq = Hmag.copy()
+    jfreq = Hmag.copy()
+    ij = np.full((n_win_i * n_win_j, 2), np.nan)
+
+    def calc_bounds(ix: int, n_inc: int, n_win: int, max_dim: int) -> Tuple[int, int, int, int]:
+        i1 = ix * n_inc
+        i2 = min(i1 + n_win, max_dim)
+        return max(i2 - n_win, 0), i2
+
+    def calc_freq(I1: Array, I2: Array, n_win: int) -> Tuple[Array, Array]:
+        I1 = (I1 + n_win // 2) % n_win
+        I2 = (I2 + n_win // 2) % n_win
+        return (
+            (I1 - n_win // 2) * 2 * np.pi / n_win,
+            (I2 - n_win // 2) * -2 * np.pi / n_win,
+        )
+
+    idx = 0
+    for ix1 in range(n_win_i):
+        for ix2 in range(n_win_j):
+            # Calculate window bounds
+            i1, i2, j1, j2 = calc_bounds(ix1, ix2, n_inc, n_win, n_i, n_j)
+
+            # Extract phase window and apply FFT
+            ph_bit = ph[i1:i2, j1:j2]
+            if np.count_nonzero(ph_bit) < 6:  # Check for enough non-zero points
+                continue
+
+            ph_fft = np.fft.fft2(ph_bit)
+            H = np.abs(ph_fft)
+
+            # Find the index of the maximum magnitude
+            I = np.argmax(H)
+            Hmag_this = H.flat[I] / H.mean()
+
+            # Calculate frequencies
+            I1, I2 = np.unravel_index(I, (n_win, n_win))
+            ifreq_val, jfreq_val = calc_freq(I1, I2, n_win)
+
+            # Update output arrays
+            Hmag[ix1, ix2] = Hmag_this
+            ifreq[ix1, ix2] = ifreq_val
+            jfreq[ix1, ix2] = jfreq_val
+            ij[idx] = [(i1 + i2) / 2, (j1 + j2) / 2]
+            idx += 1
+
+    return ifreq.T, jfreq.T, ij, Hmag.T
 
 
 def topofit(
@@ -3005,9 +3012,8 @@ def stage6_unwrap_phases() -> None:
         day = ps.day - ps.master_day
     else:
         options["lowfilt_flag"] = "n"
-        ifgday_ix = np.column_stack(
-            (np.ones((ps.n_ifg, 1)) * ps.master_ix, np.arange(1, ps.n_ifg + 1))
-        )
+        mix = int(ps.master_ix)
+        ifgday_ix = np.column_stack((np.ones(ps.n_ifg) * mix, np.arange(ps.n_ifg))).astype(np.int32)
         master_ix = np.sum(ps.master_day > ps.day)
         unwrap_ifg_index = np.setdiff1d(
             unwrap_ifg_index, master_ix
@@ -3035,7 +3041,7 @@ def stage6_unwrap_phases() -> None:
 
     ph_uw[:, unwrap_ifg_index] = ph_uw_some
 
-    if "msd_some" in locals():  # FIXME
+    if "msd_some" in locals():  # FIXME?
         msd[unwrap_ifg_index] = msd_some
 
     if scla_subtracted_sw and small_baseline_flag != "y":
@@ -3094,11 +3100,11 @@ def sb_identify_good_pixels() -> None:
     raise NotImplementedError
 
 
-def ps_plot_tca(aps, aps_name) -> Tuple[np.ndarray, str, str]: # type: ignore
+def ps_plot_tca(aps, aps_name) -> Tuple[np.ndarray, str, str]:  # type: ignore
     raise NotImplementedError
 
 
-def uw_nosnaphu(ph_w:Array, xy:Array, day:Array, options:Optional[dict]=None) -> Array:
+def uw_nosnaphu(ph_w: Array, xy: Array, day: Array, options: Optional[dict] = None) -> Array:
     raise NotImplementedError
 
 
@@ -3130,31 +3136,52 @@ def uw_3d(
     if options is None:
         options = {}
 
-    single_master_flag = len(np.unique(ifgday_ix[:, 0])) == 1
-
     # Set default option values if not provided
     options.setdefault("master_day", 0)
     options.setdefault("grid_size", 5)
     options.setdefault("prefilt_win", 16)
     options.setdefault("time_win", 365)
-    options.setdefault("unwrap_method", "3D_FULL" if not single_master_flag else "3D")
     options.setdefault("goldfilt_flag", "n")
     options.setdefault("lowfilt_flag", "n")
     options.setdefault("gold_alpha", 0.8)
     options.setdefault("n_trial_wraps", 6)
     options.setdefault("la_flag", "y")
     options.setdefault("scf_flag", "y")
-    options.setdefault("temp", [])
+    options.setdefault("temp", None)
     options.setdefault("n_temp_wraps", 2)
     options.setdefault("max_bperp_for_temp_est", 100)
     options.setdefault("variance", [])
     options.setdefault("ph_uw_predef", None)
+
+    # FIXME: This is horrible logic around unwrap_method in matlab code
+
+    single_master_flag = len(np.unique(ifgday_ix[:, 0])) == 1
+
+    if single_master_flag:
+        options.setdefault("unwrap_method", "3D")
+    else:
+        options.setdefault("unwrap_method", "3D_FULL")
+
+    if options["unwrap_method"] in ["3D", "3D_NEW"]:
+        if single_master_flag:
+            options["unwrap_method"] = "3D_FULL"
+        else:
+            options["lowfilt_flag"] = "y"
+
+    for k, v in options.items():
+        log(f"{k} = {v}")
+
+    # Convert options to dotdict
+
+    options = dotdict(options)
 
     # Ensure correct shape for input arrays
     if xy.shape[1] == 2:
         xy = np.hstack((np.arange(1, xy.shape[0] + 1).reshape(-1, 1), xy))
 
     day = np.array(day).flatten()
+
+    # DEBUG: ph matches to 2 decimal places at this point
 
     uw_grid_wrapped(
         ph,
@@ -3169,11 +3196,702 @@ def uw_3d(
 
     del ph
 
+    if DEBUG:
+        uw = stamps_load("uw_grid")
+        check("uw_grid", uw, atol=1e-2, rtol=1e-2)
+        del uw
+
+        breakpoint()
+
+    uw_interp()
+
+    uw_sb_unwrap_space_time(
+        day,
+        ifgday_ix,
+        options.unwrap_method,
+        options.time_win,
+        options.la_flag,
+        bperp,
+        options.n_trial_wraps,
+        options.prefilt_win,
+        options.scf_flag,
+        options.temp,
+        options.n_temp_wraps,
+        options.max_bperp_for_temp_est,
+    )
 
     # TODO: Implement the rest of the function
     raise NotImplementedError
 
+    uw_stat_costs(options.unwrap_method, options.variance)
+    ph_uw, msd = uw_unwrap_from_grid(xy, options.grid_size)
+
     return ph_uw, msd
+
+
+def uw_stat_costs(unwrap_method: str, variance, subset_ifg_index) -> None:  # type: ignore
+    raise NotImplementedError
+
+
+def uw_unwrap_from_grid(xy: Array, pix_size: int) -> Tuple[Array, Array]:
+    raise NotImplementedError
+
+
+def uw_sb_unwrap_space_time(
+    day: Array,
+    ifgday_ix: Array,
+    unwrap_method: str,
+    time_win: float,
+    la_flag: str,
+    bperp: Array,
+    n_trial_wraps: float,
+    prefilt_win: int,
+    scf_flag: str,
+    temp: Optional[Array] = None,
+    n_temp_wraps: Optional[float] = None,
+    max_bperp_for_temp_est: Optional[float] = None,
+) -> None:
+    """
+    Smooth and unwrap phase differences between neighboring data points in time.
+
+    Parameters:
+        day (array): Array of days.
+        ifgday_ix (array): Array of interferogram day indices.
+        unwrap_method (str): Unwrapping method.
+        time_win (float): Time window for smoothing.
+        la_flag (str): Flag for estimating look angle error.
+        bperp (array): Array of perpendicular baselines.
+        n_trial_wraps (float): Number of trial wraps.
+        prefilt_win (int): Prefilter window size.
+        scf_flag (str): Flag for using spatial cost function.
+        temp (array, optional): Array of temperatures.
+        n_temp_wraps (float, optional): Number of temperature wraps.
+        max_bperp_for_temp_est (float, optional): Maximum perpendicular baseline for temperature estimation.
+
+    Returns:
+        None
+    """
+
+    from scipy.sparse import csr_matrix
+    from scipy.linalg import cholesky, inv, lstsq
+    from scipy.interpolate import griddata
+
+    log("Unwrapping in time-space...")
+
+    uw = stamps_load("uw_grid")
+    ui = stamps_load("uw_interp")
+
+    assert isinstance(uw, dotdict)
+    assert isinstance(ui, dotdict)
+
+    check("uw_ph", uw.ph, atol=1e-3, rtol=1e-3)
+
+    n_image = day.shape[0]
+    n_ifg = uw.n_ifg
+    n_ps = uw.n_ps
+    nzix = uw.nzix
+    ij = uw.ij
+
+    if uw.ph_uw_predef is None or uw.ph_uw_predef.size == 0:
+        predef_flag = "n"
+    else:
+        predef_flag = "y"
+
+    n_image = day.shape[0]
+    nrow, ncol = ui.Z.shape
+
+    master_ix = np.where(day == 0)[0]  # FIXME: Can be removed?
+
+    day_pos_ix = np.where(day > 0)[0]
+    I = np.min(day[day_pos_ix])
+
+    dph_space = uw.ph[ui.edgs[:, 2] - 1, :] * np.conj(uw.ph[ui.edgs[:, 1] - 1, :])
+
+    check("dph_space", dph_space, atol=1e-3, rtol=1e-3)
+
+    if predef_flag == "y":
+        dph_space_uw = uw.ph_uw_predef[ui.edgs[:, 2] - 1, :] - uw.ph_uw_predef[ui.edgs[:, 1] - 1, :]
+        predef_ix = ~np.isnan(dph_space_uw)
+        dph_space_uw = dph_space_uw[predef_ix]
+    else:
+        predef_ix = []
+
+    dph_space = dph_space / np.abs(dph_space)
+
+    # ifreq_ij = []
+    # jfreq_ij = []
+
+    G = np.zeros((n_ifg, n_image))
+    for i in range(n_ifg):
+        G[i, ifgday_ix[i, 0]] = -1
+        G[i, ifgday_ix[i, 1]] = 1
+
+    nzc_ix = np.sum(np.abs(G), axis=0) != 0
+    day = day[nzc_ix]
+
+    G = G[:, nzc_ix]
+
+    zc_ix = np.where(nzc_ix == 0)[0]
+    zc_ix = np.sort(zc_ix)[::-1]
+    for i in range(len(zc_ix)):
+        ifgday_ix[ifgday_ix > zc_ix[i]] = ifgday_ix[ifgday_ix > zc_ix[i]] - 1
+
+    n = G.shape[1]
+
+    if temp is not None:
+        temp_flag = "y"
+    else:
+        temp_flag = "n"
+
+    if temp_flag == "y":
+        raise NotImplementedError("Not checked for correctness")
+
+        log(f"Estimating temperature correlation")
+        ix = np.abs(bperp) < max_bperp_for_temp_est
+        temp_sub = temp[ix]
+        temp_range = np.max(temp) - np.min(temp)
+        temp_range_sub = np.max(temp_sub) - np.min(temp_sub)
+        dph_sub = dph_space[:, ix]
+        n_temp_wraps = n_temp_wraps * (temp_range_sub / temp_range)
+
+        trial_mult = np.arange(-np.ceil(8 * n_temp_wraps), np.ceil(8 * n_temp_wraps) + 1)
+        n_trials = len(trial_mult)
+        trial_phase = temp_sub / temp_range_sub * np.pi / 4
+        trial_phase_mat = np.exp(-1j * trial_phase[:, None] * trial_mult)
+        Kt = np.zeros((ui.n_edge, 1), dtype=np.float32)
+        coh = np.zeros((ui.n_edge, 1), dtype=np.float32)
+        for i in range(ui.n_edge):
+            cpxphase = dph_sub[i, :].flatten()
+            cpxphase_mat = np.tile(cpxphase, (n_trials, 1)).T
+            phaser = trial_phase_mat * cpxphase_mat
+            phaser_sum = np.sum(phaser, axis=1)
+            coh_trial = np.abs(phaser_sum) / np.sum(np.abs(cpxphase))
+            coh_max_ix = np.argmax(coh_trial)
+            coh_max = coh_trial[coh_max_ix]
+
+            falling_ix = np.where(np.diff(coh_trial[: coh_max_ix + 1]) < 0)[0]
+            if falling_ix.size > 0:
+                peak_start_ix = falling_ix[-1] + 1
+            else:
+                peak_start_ix = 0
+
+            rising_ix = np.where(np.diff(coh_trial[coh_max_ix:]) > 0)[0]
+            if rising_ix.size > 0:
+                peak_end_ix = rising_ix[0] + coh_max_ix
+            else:
+                peak_end_ix = n_trials - 1
+
+            coh_trial[peak_start_ix : peak_end_ix + 1] = 0
+
+            if coh_max - np.max(coh_trial) > 0.1:
+                K0 = np.pi / 4 / temp_range_sub * trial_mult[coh_max_ix]
+                resphase = cpxphase * np.exp(-1j * (K0 * temp_sub))
+                offset_phase = np.sum(resphase)
+                resphase = np.angle(resphase * np.conj(offset_phase))
+                weighting = np.abs(cpxphase)
+                mopt = lstsq(weighting[:, None] * temp_sub[:, None], weighting * resphase)[0]
+                Kt[i] = K0 + mopt
+                phase_residual = cpxphase * np.exp(-1j * (Kt[i] * temp_sub))
+                mean_phase_residual = np.sum(phase_residual)
+                coh[i] = np.abs(mean_phase_residual) / np.sum(np.abs(phase_residual))
+
+        Kt[coh < 0.31] = 0
+        dph_space = dph_space * np.exp(-1j * Kt * temp[:, None])
+
+        if predef_flag == "y":
+            dph_temp = Kt * temp[:, None]
+            dph_space_uw = dph_space_uw - dph_temp[predef_ix]
+
+        dph_sub = dph_sub * np.exp(-1j * Kt * temp_sub[:, None])
+
+    if la_flag == "y":
+        # DEBUG: default case
+
+        log(f"Estimating look angle error")
+
+        bperp_range = np.max(bperp) - np.min(bperp)
+
+        ix = np.where(np.abs(np.diff(ifgday_ix, axis=1)).flatten() == 1)[0]
+
+        if len(ix) >= n_image - 1:
+            raise NotImplementedError("Not checked for correctness")
+
+            log("using sequential daisy chain of interferograms")
+
+            dph_sub = dph_space[:, ix]
+            bperp_sub = bperp[ix]
+            bperp_range_sub = np.max(bperp_sub) - np.min(bperp_sub)
+            n_trial_wraps = n_trial_wraps * (bperp_range_sub / bperp_range)
+
+        else:
+            # DEBUG: default case
+
+            ifgs_per_image = np.sum(np.abs(G), axis=0).astype(np.int32)
+            max_ifgs_per_image = np.max(ifgs_per_image)
+            max_ix = np.argmax(ifgs_per_image)
+
+            log(f"{max_ifgs_per_image = }")
+
+            if max_ifgs_per_image >= n_image - 2:
+                # DEBUG: default case
+                log("Using sequential daisy chain of interferograms")
+
+                # Find the interferograms that are connected to the master
+                ix = G[:, max_ix] != 0
+
+                gsub = G[ix, max_ix]
+                sign_ix = -np.sign(gsub.flatten()).astype(np.int32)
+
+                # Only use interferograms that are connected to the master
+                dph_sub = dph_space[:, ix]
+
+                bperp_sub = bperp[ix]
+                bperp_sub[sign_ix == -1] = -bperp_sub[sign_ix == -1]
+                bperp_sub = np.concatenate([bperp_sub, [0]])
+
+                sign_ix = np.tile(sign_ix, (ui.n_edge, 1))
+
+                # Flip the sign if necessary to make the ith ifg the master
+                dph_sub[sign_ix == -1] = np.conj(dph_sub[sign_ix == -1])
+
+                # Add zero phase master
+                dph_sub = np.hstack((dph_sub, np.mean(np.abs(dph_sub), axis=1, keepdims=True)))
+
+                slave_ix = np.sum(ifgday_ix[ix, :], axis=1) - max_ix
+
+                # Extract the days for the subset
+                day_sub = day[np.concatenate((slave_ix, [max_ix]))]
+
+                # Sort the interferograms by day
+                sort_ix = np.argsort(day_sub)
+                day_sub = day_sub[sort_ix]
+                dph_sub = dph_sub[:, sort_ix]
+                bperp_sub = bperp_sub[sort_ix]
+                bperp_sub = np.diff(bperp_sub)
+                bperp_range_sub = np.max(bperp_sub) - np.min(bperp_sub)
+
+                n_trial_wraps = n_trial_wraps * (bperp_range_sub / bperp_range)
+                n_sub = len(day_sub)
+
+                dph_sub = dph_sub[:, 1:] * np.conj(dph_sub[:, :-1])
+
+                nbad = np.count_nonzero(np.isnan(dph_sub))
+                log(f"{nbad = } values in {n_sub} interferograms")
+
+                # Normalize the phase at valid pixels
+                valid_ix = np.isfinite(dph_sub)
+                dph_sub[valid_ix] = dph_sub[valid_ix] / np.abs(dph_sub[valid_ix])
+
+            else:
+                raise NotImplementedError("Not checked for correctness")
+
+                dph_sub = dph_space
+                bperp_sub = bperp
+                bperp_range_sub = bperp_range
+
+        # DEBUG: default case
+
+        trial_mult = np.arange(-np.ceil(8 * n_trial_wraps), np.ceil(8 * n_trial_wraps) + 1)
+        n_trials = len(trial_mult)
+
+        trial_phase = bperp_sub / bperp_range_sub * np.pi / 4
+        trial_phase_mat = np.exp(-1j * trial_phase[:, None] * trial_mult)
+
+        K = np.zeros((ui.n_edge, 1), dtype=np.float32)
+        coh = np.zeros((ui.n_edge, 1), dtype=np.float32)
+
+        for i in range(ui.n_edge):
+            cpxphase = dph_sub[i, :].flatten()
+            cpxphase_mat = np.tile(cpxphase, (n_trials, 1)).T
+
+            phaser = trial_phase_mat * cpxphase_mat
+            phaser_sum = np.sum(phaser, axis=1)
+
+            coh_trial = np.abs(phaser_sum) / np.sum(np.abs(cpxphase))
+            coh_max_ix = np.argmax(coh_trial)
+            coh_max = coh_trial[coh_max_ix]
+
+            falling_ix = np.where(np.diff(coh_trial[: coh_max_ix + 1]) < 0)[0]
+            if falling_ix.size > 0:
+                peak_start_ix = falling_ix[-1] + 1
+            else:
+                peak_start_ix = 0
+
+            rising_ix = np.where(np.diff(coh_trial[coh_max_ix:]) > 0)[0]
+            if rising_ix.size > 0:
+                peak_end_ix = rising_ix[0] + coh_max_ix
+            else:
+                peak_end_ix = n_trials - 1
+
+            coh_trial[peak_start_ix : peak_end_ix + 1] = 0
+
+            if coh_max - np.max(coh_trial) > 0.1:  # FIXME: hardcoded value
+                K0 = np.pi / 4 / bperp_range_sub * trial_mult[coh_max_ix]
+
+                resphase = cpxphase * np.exp(-1j * (K0 * bperp_sub))
+                offset_phase = np.sum(resphase)
+                resphase = np.angle(resphase * np.conj(offset_phase))
+
+                weighting = np.abs(cpxphase)
+                mopt = lstsq(weighting[:, None] * bperp_sub[:, None], weighting * resphase)[0]
+
+                K[i] = K0 + mopt
+
+                phase_residual = cpxphase * np.exp(-1j * (K[i] * bperp_sub))
+                mean_phase_residual = np.sum(phase_residual)
+
+                coh[i] = np.abs(mean_phase_residual) / np.sum(np.abs(phase_residual))
+
+        K[coh < 0.31] = 0  # FIXME: hardcoded value
+
+        if temp_flag == "y":
+            raise NotImplementedError("Not checked for correctness")
+
+            dph_space[K == 0, :] = dph_space[K == 0, :] * np.exp(1j * Kt[K == 0] * temp[:, None])
+            Kt[K == 0] = 0
+            K[Kt == 0] = 0
+
+        dph_space = dph_space * np.exp(-1j * K * bperp[:, None].T)
+
+        if predef_flag == "y":
+            raise NotImplementedError("Not checked for correctness")
+
+            dph_scla = K * bperp[:, None]
+            dph_space_uw = dph_space_uw - dph_scla[predef_ix]
+
+    spread = csr_matrix((ui.n_edge, n_ifg), dtype=np.float32)
+
+    if unwrap_method == "2D":
+        raise NotImplementedError("Not checked for correctness")
+
+        dph_space_uw = np.angle(dph_space)
+        if la_flag == "y":
+            dph_space_uw = dph_space_uw + K * bperp[:, None]
+        if temp_flag == "y":
+            dph_space_uw = dph_space
+
+        dph_noise = []
+        stamps_save("uw_space_time", dph_space_uw=dph_space_uw, spread=spread, dph_noise=dph_noise)
+
+    elif unwrap_method == "3D_NO_DEF":
+        raise NotImplementedError("Not checked for correctness")
+
+        dph_noise = np.angle(dph_space)
+        dph_space_uw = np.angle(dph_space)
+        if la_flag == "y":
+            dph_space_uw = dph_space_uw + K * bperp[:, None]
+        if temp_flag == "y":
+            dph_space_uw = dph_space_uw + Kt * temp[:, None]
+        stamps_save("uw_space_time", dph_space_uw=dph_space_uw, dph_noise=dph_noise, spread=spread)
+
+    else:
+        # DEBUG: default case
+
+        log(f"Smoothing in time")
+
+        if unwrap_method == "3D_FULL":  # FIXME: use an elif instead?
+            # DEBUG: default case
+
+            check("dph_space", dph_space)
+
+            breakpoint()
+
+            dph_smooth_ifg = np.full(dph_space.shape, np.nan, dtype=np.float32)
+
+            for i in range(n_image):
+                log(f"Smoothing in time: {i + 1}/{n_image}")
+
+                ix = G[:, i] != 0
+                if np.count_nonzero(ix) >= n_image - 2:
+                    gsub = G[ix, i]
+                    dph_sub = dph_space[:, ix]
+
+                    sign_ix = np.tile(-np.sign(gsub.flatten().astype(np.float32)), (ui.n_edge, 1))
+                    dph_sub[sign_ix == -1] = np.conj(dph_sub[sign_ix == -1])
+
+                    slave_ix = np.sum(ifgday_ix[ix, :], axis=1) - i
+
+                    day_sub = day[slave_ix]
+                    sort_ix = np.argsort(day_sub)
+                    day_sub = day_sub[sort_ix]
+                    dph_sub = dph_sub[:, sort_ix]
+                    dph_sub_angle = np.angle(dph_sub)
+                    n_sub = day_sub.shape[0]
+
+                    dph_smooth = np.zeros((ui.n_edge, n_sub), dtype=np.float32)
+
+                    for i1 in range(n_sub):
+                        time_diff = (day_sub[i1] - day_sub).flatten()
+
+                        weight_factor = np.exp(-(time_diff**2) / (2 * time_win**2))
+                        weight_factor = weight_factor / np.sum(weight_factor)
+
+                        dph_mean = np.sum(dph_sub * np.tile(weight_factor, (ui.n_edge, 1)), axis=1)
+
+                        breakpoint()
+
+                        dph_mean_adj = (
+                            np.mod(
+                                dph_sub_angle - np.tile(np.angle(dph_mean), (1, n_sub)) + np.pi,
+                                2 * np.pi,
+                            )
+                            - np.pi
+                        )
+
+                        GG = np.column_stack((np.ones(n_sub), time_diff))
+
+                        if GG.shape[0] > 1:
+                            m = lstsq(GG, dph_mean_adj.T, np.diag(weight_factor))[0]
+                        else:
+                            m = np.zeros((GG.shape[1], ui.n_edge))
+
+                        dph_smooth[:, i1] = dph_mean * np.exp(1j * m[0, :])
+
+                    dph_smooth_sub = np.cumsum(
+                        np.hstack(
+                            (
+                                np.angle(dph_smooth[:, 0:1]),
+                                np.angle(dph_smooth[:, 1:] * np.conj(dph_smooth[:, :-1])),
+                            )
+                        ),
+                        axis=1,
+                    )
+
+                    close_master_ix = np.where(slave_ix - i > 0)[0]
+                    if close_master_ix.size == 0:
+                        close_master_ix = n_sub - 1
+                    else:
+                        close_master_ix = close_master_ix[0]
+                        if close_master_ix > 0:
+                            close_master_ix = np.array([close_master_ix - 1, close_master_ix])
+
+                    dph_close_master = np.mean(dph_smooth_sub[:, close_master_ix], axis=1)
+
+                    dph_smooth_sub = dph_smooth_sub - np.tile(
+                        dph_close_master - np.angle(np.exp(1j * dph_close_master)), (1, n_sub)
+                    )
+                    dph_smooth_sub = dph_smooth_sub * sign_ix
+
+                    already_sub_ix = np.where(~np.isnan(dph_smooth_ifg[0, ix]))[0]
+
+                    ix = np.where(ix)[0]
+                    already_ix = ix[already_sub_ix]
+
+                    std_noise1 = np.std(
+                        np.angle(
+                            dph_space[:, already_ix] * np.exp(-1j * dph_smooth_ifg[:, already_ix])
+                        )
+                    )
+
+                    std_noise2 = np.std(
+                        np.angle(
+                            dph_space[:, already_ix]
+                            * np.exp(-1j * dph_smooth_sub[:, already_sub_ix])
+                        )
+                    )
+
+                    keep_ix = np.ones(n_sub, dtype=bool)
+                    keep_ix[already_sub_ix[std_noise1 < std_noise2]] = False
+
+                    dph_smooth_ifg[:, ix[keep_ix]] = dph_smooth_sub[:, keep_ix]
+
+            dph_noise = np.angle(dph_space * np.exp(-1j * dph_smooth_ifg))
+            dph_noise[np.std(dph_noise, axis=1) > 1.2, :] = np.nan
+
+        else:
+            raise NotImplementedError("Not checked for correctness")
+
+            # DEBUG: Are these all the cases?
+            assert unwrap_method in ["3D_SMALL_DEF", "3D_QUICK", "3D_SMALL", "3D"]
+
+            x = (day - day[0]) * (n - 1) / (day[-1] - day[0])
+
+            if predef_flag == "y":
+                raise NotImplementedError("Not checked for correctness")
+
+                n_dph = dph_space.shape[0]
+                dph_space_angle = np.angle(dph_space)
+                dph_space_angle[predef_ix] = dph_space_uw
+                dph_space_series = np.zeros((n, n_dph))
+                for i in range(n_dph):
+                    W = predef_ix[i, :] + 0.01
+                    dph_space_series[1:, i] = lstsq(G[:, 1:], dph_space_angle[i, :], W)[0]
+
+            if predef_flag == "n":
+                # DEBUG: default case
+                sol = lstsq(G[:, 1:], np.angle(dph_space).T)[0]
+                dph_space_series = np.vstack((np.zeros((1, ui.n_edge)), sol))
+
+            dph_smooth_series = np.zeros((G.shape[1], ui.n_edge), dtype=np.float32)
+
+            for i1 in range(n):
+                time_diff_sq = (day[i1] - day) ** 2
+                weight_factor = np.exp(-time_diff_sq / (2 * time_win**2))
+                weight_factor = weight_factor / np.sum(weight_factor)
+                dph_smooth_series[i1, :] = np.sum(
+                    dph_space_series * np.tile(weight_factor, (1, ui.n_edge)), axis=0
+                )
+
+            dph_smooth_ifg = (G @ dph_smooth_series).T
+            dph_noise = np.angle(dph_space * np.exp(-1j * dph_smooth_ifg))
+
+            if unwrap_method in ["3D_SMALL_DEF", "3D_QUICK"]:
+                raise NotImplementedError("Not checked for correctness")
+
+                not_small_ix = np.where(np.std(dph_noise, axis=1) > 1.3)[0]
+                log(f"{len(not_small_ix)} edges with high std dev in time")
+                dph_noise[not_small_ix, :] = np.nan
+
+            else:
+                # DEBUG: Are these all the cases?
+                assert unwrap_method in ["3D_SMALL", "3D"]
+
+                uw = stamps_load("uw_grid")
+
+                ph_noise = np.angle(uw["ph"] * np.conj(uw["ph_lowpass"]))
+
+                dph_noise_sf = ph_noise[ui["edgs"][:, 2], :] - ph_noise[ui["edgs"][:, 1], :]
+
+                m_minmax = np.tile(np.array([[-np.pi, np.pi]]), (5, 1)) * np.tile(
+                    np.array([[0.5], [0.25], [1], [0.25], [1]]), (1, 2)
+                )
+
+                anneal_opts = np.array([[1], [15], [0], [0], [0], [0], [0]])
+                covm = np.cov(dph_noise_sf)
+
+                try:
+                    W = cholesky(inv(covm))
+                    P = 0
+                except np.linalg.LinAlgError:
+                    W = np.diag(1 / np.sqrt(np.diag(covm)))
+                    P = 1
+
+                not_small_ix = np.where(np.std(dph_noise, axis=1) > 1)[0]
+
+                log(f"Performing complex smoothing on {len(not_small_ix)} edges")
+
+                n_proc = 0
+                for i in not_small_ix:
+                    dph = np.angle(dph_space[i, :])
+
+                    dph_smooth_series[:, i] = uw_sb_smooth_unwrap(
+                        m_minmax, anneal_opts, G, W, dph, x
+                    )
+
+                    n_proc += 1
+
+                    if n_proc % 1000 == 0:
+                        stamps_save(
+                            "uw_unwrap_time",
+                            G=G,
+                            dph_space=dph_space,
+                            dph_smooth_series=dph_smooth_series,
+                        )
+
+                        log(f"{n_proc} edges of {len(not_small_ix)} reprocessed")
+
+                dph_smooth_ifg = (G @ dph_smooth_series).T
+                dph_noise = np.angle(dph_space * np.exp(-1j * dph_smooth_ifg))
+
+        dph_space_uw = dph_smooth_ifg + dph_noise
+
+        if la_flag == "y":
+            dph_space_uw = dph_space_uw + K * bperp[:, None]
+
+        if temp_flag == "y":
+            raise NotImplementedError("Not checked for correctness")
+            dph_space_uw = dph_space_uw + Kt * temp[:, None]
+
+        if scf_flag == "y":
+            raise NotImplementedError("Not checked for correctness")
+
+            log(f"Calculating local phase gradients")
+
+            ifreq_ij = np.full((n_ps, n_ifg), np.nan, dtype=np.float32)
+            jfreq_ij = np.full((n_ps, n_ifg), np.nan, dtype=np.float32)
+
+            ifgw = np.zeros((nrow, ncol))
+            uw = stamps_load("uw_grid")
+
+            for i in range(n_ifg):
+                ifgw[nzix] = uw["ph"][:, i]
+                ifreq, jfreq, grad_ij, Hmag = gradient_filt(ifgw, prefilt_win)
+                ix = (~np.isnan(ifreq)) & (Hmag / (np.abs(ifreq) + 1) > 3)
+
+                if np.sum(ix) > 2:
+                    ifreq_ij[:, i] = griddata(
+                        grad_ij[ix, 1],
+                        grad_ij[ix, 0],
+                        ifreq[ix],
+                        ij[:, 1],
+                        ij[:, 0],
+                        method="linear",
+                    )
+
+                ix = (~np.isnan(jfreq)) & (Hmag / (np.abs(jfreq) + 1) > 3)
+
+                if np.sum(ix) > 2:
+                    jfreq_ij[:, i] = griddata(
+                        grad_ij[ix, 1],
+                        grad_ij[ix, 0],
+                        jfreq[ix],
+                        ij[:, 1],
+                        ij[:, 0],
+                        method="linear",
+                    )
+
+            spread2 = np.zeros(spread.shape, dtype=np.float32)
+            dph_smooth_uw2 = np.full((ui.n_edge, n_ifg), np.nan, dtype=np.float32)
+
+            log(f"Smoothing using local phase gradients")
+
+            for i in range(ui.n_edge):
+                nodes_ix = ui["edgs"][i, 1:3]
+                ifreq_edge = np.mean(ifreq_ij[nodes_ix, :], axis=0)
+                jfreq_edge = np.mean(jfreq_ij[nodes_ix, :], axis=0)
+                diff_i = np.diff(ij[nodes_ix, 0])
+                diff_j = np.diff(ij[nodes_ix, 1])
+                dph_smooth_uw2[i, :] = diff_i * ifreq_edge + diff_j * jfreq_edge
+
+                spread2[i, :] = np.diff(ifreq_ij[nodes_ix, :], axis=0) + np.diff(
+                    jfreq_ij[nodes_ix, :], axis=0
+                )
+
+            log(f"Choosing between time and phase gradient smoothing")
+
+            std_noise = np.std(dph_noise, axis=1)
+            dph_noise2 = np.angle(np.exp(1j * (dph_space_uw - dph_smooth_uw2)))
+            std_noise2 = np.std(dph_noise2, axis=1)
+            dph_noise2[std_noise2 > 1.3, :] = np.nan
+
+            shaky_ix = np.isnan(std_noise) | (std_noise > std_noise2)
+
+            log(
+                f"{ui.n_edge - np.sum(shaky_ix)} arcs smoothed in time, {np.sum(shaky_ix)} in space"
+            )
+
+            dph_noise[shaky_ix, :] = dph_noise2[shaky_ix, :]
+            dph_space_uw[shaky_ix, :] = dph_smooth_uw2[shaky_ix, :] + dph_noise2[shaky_ix, :]
+            spread[shaky_ix, :] = spread2[shaky_ix, :]
+
+        else:
+            shaky_ix = []
+
+        stamps_save(
+            "uw_space_time",
+            dph_space_uw=dph_space_uw,
+            dph_noise=dph_noise,
+            G=G,
+            spread=spread,
+            ifreq_ij=ifreq_ij,
+            jfreq_ij=jfreq_ij,
+            shaky_ix=shaky_ix,
+            predef_ix=predef_ix,
+        )
+
+
+def uw_sb_smooth_unwrap(bounds, options, G, W, dph, x1):
+    raise NotImplementedError
 
 
 def uw_grid_wrapped(
@@ -3198,7 +3916,6 @@ def uw_grid_wrapped(
     :param gold_alpha: Alpha value for Goldstein filter.
     :param ph_in_predef: Predefined phase input (optional).
     """
-
 
     if ph_in is None or xy_in is None:
         raise ValueError("not enough arguments")
@@ -3256,9 +3973,11 @@ def uw_grid_wrapped(
         if np.isreal(ph_in).all():
             ph_this = np.exp(1j * ph_in[:, i1])
         else:
+            # DEBUG: default case
             ph_this = ph_in[:, i1]
 
         if ph_in_predef is not None:
+            # DEBUG: ignored by default
             ph_this_uw = ph_in_predef[:, i1]
             ph_grid_uw[:] = 0
             N_grid_uw[:] = 0
@@ -3269,32 +3988,43 @@ def uw_grid_wrapped(
             ph_grid[(xy_in[:, 1] - 1) * n_i + xy_in[:, 2]] = ph_this
             if ph_in_predef is not None:
                 ph_grid_uw[(xy_in[:, 1] - 1) * n_i + xy_in[:, 2]] = ph_this_uw
+
         else:
+            # DEBUG: default case
             for i in range(n_ps):
                 ph_grid[grid_ij[i, 0], grid_ij[i, 1]] += ph_this[i]
+
             if ph_in_predef is not None:
+                # DEBUG: ignored by default
                 for i in range(n_ps):
                     if not np.isnan(ph_this_uw[i]):
                         ph_grid_uw[grid_ij[i, 0], grid_ij[i, 1]] += ph_this_uw[i]
                         N_grid_uw[grid_ij[i, 0], grid_ij[i, 1]] += 1
+
                 ph_grid_uw = ph_grid_uw / N_grid_uw
 
         if i1 == 0:
+            # DEBUG: default case
+
             nzix = ph_grid != 0
             n_ps_grid = np.sum(nzix)
+
             ph = np.zeros((n_ps_grid, n_ifg), dtype=np.complex64)
 
             if lowfilt_flag.lower() == "y":
                 ph_lowpass = ph
             else:
+                # DEBUG: default case
                 ph_lowpass = None
 
             if ph_in_predef is not None:
                 ph_uw_predef = np.zeros((n_ps_grid, n_ifg), dtype=np.complex64)
             else:
+                # DEBUG: default case
                 ph_uw_predef = None
 
         if goldfilt_flag.lower() == "y" or lowfilt_flag.lower() == "y":
+            # DEBUG: default case
             ph_this_gold, ph_this_low = wrap_filt(
                 ph_grid, prefilt_win, gold_alpha, low_flag=lowfilt_flag
             )
@@ -3303,9 +4033,10 @@ def uw_grid_wrapped(
                 ph_lowpass[:, i1] = ph_this_low[nzix]
 
         if goldfilt_flag.lower() == "y":
-            ph[:, i1] = ph_this_gold[nzix]
+            # DEBUG: default case
+            ph[:, i1] = ph_this_gold.T[nzix.T]  # Matlab ravels in column-major order
         else:
-            ph[:, i1] = ph_grid[nzix]
+            ph[:, i1] = ph_grid.T[nzix.T]
 
         if ph_in_predef is not None and ph_uw_predef is not None:
             ph_uw_predef[:, i1] = ph_grid_uw[nzix]
@@ -3315,14 +4046,17 @@ def uw_grid_wrapped(
             ph_uw_predef[ix, i1] = ph_uw_predef[ix, i1] + ph_diff
 
         # check(f"ph_grid_{i1+1}", ph_grid, atol=1e-2, rtol=1e-2)
-        log(f"{i1+1:{len(str(n_ifg))}d}/{n_ifg}: "
-            f"nansum(abs(ph_grid)) = {np.nansum(np.abs(ph_grid)):.2f}")
+        log(
+            f"{i1+1:{len(str(n_ifg))}d}/{n_ifg}: "
+            f"nansum(abs(ph_grid)) = {np.nansum(np.abs(ph_grid)):.2f} "
+            f"nansum(abs(ph)) = {np.nansum(np.abs(ph)):.2f}"
+        )
 
     n_ps = n_ps_grid
 
     log(f"Number of resampled points: {n_ps}")
 
-    # check("ph_grid", ph_grid, atol=1e-2, rtol=1e-2)
+    check("ph_grid", ph_grid, atol=1e-2, rtol=1e-2)
 
     nz_i, nz_j = np.where(ph_grid != 0)
     if pix_size == 0:
@@ -3385,8 +4119,8 @@ def wrap_filt(
     # Initialize variables and compute increments for window processing
     n_i, n_j = ph.shape
     n_inc = n_win // 2
-    n_win_i = int(np.ceil(n_i // n_inc) - 1)
-    n_win_j = int(np.ceil(n_j // n_inc) - 1)
+    n_win_i = int(np.ceil(n_i / n_inc) - 1)
+    n_win_j = int(np.ceil(n_j / n_inc) - 1)
 
     # Initialize output arrays
     ph_out = np.zeros_like(ph, dtype=ph.dtype)
@@ -3410,20 +4144,31 @@ def wrap_filt(
     B = np.outer(gausswin(7), gausswin(7))
     L = ifftshift(np.outer(gausswin(n_win + n_pad, 16), gausswin(n_win + n_pad, 16)))
 
+    ph_bit = np.zeros((n_win + n_pad, n_win + n_pad), dtype=ph.dtype)
+
+    HH = np.zeros((n_win_i, n_win_j), dtype=np.complex64)
+
     for ix1 in range(n_win_i):
         wf = wind_func.copy()
-        i1, i2 = ix1 * n_inc + 1, min(ix1 * n_inc + n_win, n_i)
+        i1 = ix1 * n_inc + 1
+        i2 = i1 + n_win - 1
         if i2 > n_i:  # Adjust the window if it exceeds the image bounds
-            wf = np.pad(wf[: i2 - n_i, :], ((0, i2 - n_i), (0, 0)), "constant")
+            i_shift = i2 - n_i
+            i2 = n_i
+            i1 = n_i - n_win + 1
+            wf = np.vstack((np.zeros((i_shift, n_win)), wf[: (n_win - i_shift), :]))
 
         for ix2 in range(n_win_j):
             wf2 = wf.copy()
-            j1, j2 = ix2 * n_inc + 1, min(ix2 * n_inc + n_win, n_j)
+            j1 = ix2 * n_inc + 1
+            j2 = j1 + n_win - 1
             if j2 > n_j:  # Adjust the window for the horizontal dimension
-                wf2 = np.pad(wf2[:, : j2 - n_j], ((0, 0), (0, j2 - n_j)), "constant")
+                j_shift = j2 - n_j
+                j2 = n_j
+                j1 = n_j - n_win + 1
+                wf2 = np.hstack((np.zeros((n_win, j_shift)), wf2[:, : (n_win - j_shift)]))
 
             # Initialize the phase bit for the current window
-            ph_bit = np.zeros((n_win + n_pad, n_win + n_pad), dtype=ph.dtype)
             ph_bit[:n_win, :n_win] = ph[(i1 - 1) : i2, (j1 - 1) : j2]
 
             # Apply FFT and filter the phase data
@@ -3431,15 +4176,18 @@ def wrap_filt(
             H = np.abs(ph_fft)
             H = ifftshift(convolve2d(fftshift(H), B, mode="same"))  # Smooth the frequency response
 
-            meanH = np.median(H)
-            if meanH != 0:
-                H = (H / meanH) ** alpha
+            medianH = np.median(H)
+            if medianH != 0:
+                H = (H / medianH) ** alpha
             else:
                 H = H**alpha
 
-            ph_filt = (
-                np.fft.ifft2(ph_fft * H)[:n_win, :n_win] * wf2
-            )  # Apply inverse FFT and window function
+            HH[ix1, ix2] = np.mean(np.abs(ph_bit))
+
+            # Apply inverse FFT and window function
+            ph_filt = np.fft.ifft2(ph_fft * H)
+
+            ph_filt = ph_filt[:n_win, :n_win] * wf2
 
             # Optionally apply lowpass filtering
             if low_flag == "y":
@@ -3447,7 +4195,7 @@ def wrap_filt(
                 ph_out_low[i1 - 1 : i2, j1 - 1 : j2] += ph_filt_low
 
             # Update the output array with filtered data
-            ph_out[i1 - 1 : i2, j1 - 1 : j2] += ph_filt
+            ph_out[i1 - 1 : i2, j1 - 1 : j2] = ph_out[i1 - 1 : i2, j1 - 1 : j2] + ph_filt
 
     # Reset the magnitude of the output phase to match the input phase
     ph_out = abs(ph) * np.exp(1j * np.angle(ph_out))
@@ -3480,17 +4228,17 @@ def uw_interp() -> None:
     nzix = uw.nzix
 
     nrow, ncol = nzix.shape
-    I, J = np.meshgrid(np.arange(1, nrow+1), np.arange(1, ncol+1))
+    I, J = np.meshgrid(np.arange(1, nrow + 1), np.arange(1, ncol + 1))
     PQ = np.column_stack((I.ravel(), J.ravel()))
 
     use_triangle = False
     if Path(TRIANGLE).exists():
         use_triangle = True
 
-    # Make i,j the indices of the non-zero indices which are the 
+    # Make i,j the indices of the non-zero indices which are the
     # pixel locations of the PS points in the grid (1-based indexing)
     jj, ii = np.where(nzix.T)
-    ij = np.column_stack((np.arange(1, n_ps+1), ii+1, jj+1))
+    ij = np.column_stack((np.arange(1, n_ps + 1), ii + 1, jj + 1))
 
     if use_triangle:
         log("Using TRIANGLE to generate a Delaunay triangulation")
@@ -4096,12 +4844,13 @@ def run_tests() -> None:
     # test_dates()
     # test_interp()
     # test_stage1()
-    # test_estimate_coherence()
-    # test_ps_select()
-    # test_ps_weed()
-    # test_ps_correct_phase()
+    # test_stage2()
+    # test_stage3()
+    # test_stage4()
+    # test_stage5()
     # test_ps_calc_ifg_std()
-    test_uw_interp()
+    # test_uw_interp()
+    test_stage6()
     log("\nAll tests passed!\n")
 
 
