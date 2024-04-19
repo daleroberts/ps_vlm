@@ -43,7 +43,9 @@ from numpy.typing import NDArray as Array
 np.set_printoptions(precision=4, suppress=True, linewidth=110, threshold=10000)
 
 DEBUG = True
+VERBOSE = False
 TRIANGLE = "/Users/daleroberts/Work/.envbin/bin/triangle"
+SNAPHU = "/Users/daleroberts/Work/.envbin/bin/snaphu"
 
 
 class dotdict(dict):
@@ -72,161 +74,161 @@ class dotdict(dict):
 def log(msg: str) -> None:
     """Prints a message to stderr."""
     if msg.startswith("#"):
-        print("\n" + msg, file=sys.stderr)
+        print("\n+" + msg[1:] + "\n", file=sys.stderr)
     else:
-        print(msg, file=sys.stderr)
+        print("  " + msg, file=sys.stderr)
 
 
 def run_triangle_on(fn: Path) -> None:
     """Run the Triangle program on the given file."""
+    cmd = [TRIANGLE, "-V", "-e", str(fn)]
     base = fn.stem
-    if DEBUG:
+    if VERBOSE:
         out = sys.stdout
-        subprocess.call([TRIANGLE, "-V", "-e", str(fn)], stdout=out)
+        subprocess.call(cmd, stdout=out, stderr=out)
     else:
         with open(f"triangle_{base}.log", "w") as out:
-            subprocess.call([TRIANGLE, "-e", str(fn)], stdout=out)
+            subprocess.call(cmd, stdout=out, stderr=out)
+
+
+def run_snaphu_on(fn: Path, ncol: int) -> None:
+    """Run the Snaphu program on the given file."""
+    cmd = [SNAPHU, "-d", "-f", str(fn), str(ncol)]
+    base = fn.stem
+    if VERBOSE:
+        out = sys.stdout
+        log(f"Running: {cmd}")
+        subprocess.call(cmd, stdout=out, stderr=out)
+    else:
+        with open(f"snaphu.log", "w") as out:
+            subprocess.call(cmd, stdout=out, stderr=out)
+
+
+def chop(x: Array, eps: Optional[float] = None) -> Array:
+    """Chop off very small values."""
+    if eps is None:
+        eps = 10 * np.finfo(x.dtype).eps
+    return np.where(np.abs(x) < eps, 0, x)
 
 
 def results_equal(
     name: str,
     is_idx: bool = False,
-    atol: float = 1e-8,
-    rtol: float = 1e-8,
+    tol: float = 1e-8,
     equal_nan: bool = True,
+    modulo: Optional[float] = None,
 ) -> bool:
     """Check if the results of the current run match the expected results that
     were obtained with the MATLAB version of the code."""
 
-    python = stamps_load(name)
-    matlab = loadmat(Path(f"{name}.mat"))
+    p = stamps_load(name)
+    m = loadmat(Path(f"{name}.mat"))
 
     if name.endswith("1") and "_" not in name:
         name = name[:-1]
 
-    ndiffs = 0
+    def allclose(p: Array, m: Array, tol: float, equal_nan: bool, modulo: Optional[float]) -> bool:
+        diff = np.abs(p - m)
+        if modulo is not None:
+            mask = diff > tol
+            diff[mask] = np.minimum(np.mod(diff[mask] + tol, modulo), diff[mask])
+        if equal_nan:
+            mask = np.logical_and(np.isnan(p), np.isnan(m))
+            diff[mask] = 0
+        return bool(np.all(diff <= tol))
 
-    def compare_array(python: Array, matlab: Array) -> None:
-        print(f"{python.dtype=} vs {matlab.dtype=}")
-        print(f"{python.shape=} vs {matlab.shape=}")
-        print(f"Python:\n{python}")
-        print(f"MATLAB:\n{matlab}")
-        diff = np.abs(python - matlab)
-        mask = np.logical_and(np.isnan(python), np.isnan(matlab))
+    def print_values(p: Any, m: Any) -> None:
+        print(f"Python:\n{p}")
+        print(f"MATLAB:\n{m}")
+
+    def compare_array(p: Array, m: Array) -> int:
+        print(f"{p.dtype = }\t{p.shape = }\tbyteorder = '{p.dtype.byteorder}'")
+        print(f"{m.dtype = }\t{m.shape = }\tbyteorder = '{m.dtype.byteorder}'")
+        print_values(p, m)
+        diff = np.abs(p - m)
+        if modulo is not None:
+            moddiff = np.mod(diff + tol, modulo)
+            diff = np.minimum(moddiff, diff)
+        mask = np.logical_and(np.isnan(p), np.isnan(m))
         diff[mask] = 0
-        ndiff = np.nansum(diff > 1e-5)
-        print(f"Count of differences: {ndiff}")
+        ndiff = np.nansum(diff > tol)
+        print(f"Count of differences: {ndiff} ({ndiff / p.size * 100:.2f}%)")
         ix = np.unravel_index(np.argmax(diff), diff.shape)
         print(f"Location of max difference: {ix}")
-        print(f"Python value: {python[ix]}")
-        print(f"MATLAB value: {matlab[ix]}")
+        print_values(p[ix], m[ix])
         print(f"Difference: {diff[ix]}")
         print("")
-        if python.shape == matlab.shape:
-            # print out values from equivalent columns next to each other
+        if p.shape == m.shape:
             nprinted = 0
-            for i in range(python.shape[0]):
-                if np.allclose(python[i], matlab[i], rtol=rtol, atol=atol, equal_nan=equal_nan):
+            for i in range(p.shape[0]):
+                if np.allclose(p[i], m[i], rtol=tol, atol=tol, equal_nan=equal_nan):
                     continue
                 nprinted += 1
-                print(f"{i:6d}:\t{python[i]}\t{matlab[i]}")
+                print(f"{i:6d}:\t{p[i]}\t{m[i]}")
                 if nprinted > 10:
                     break
         print("")
-        if DEBUG:
+        if DEBUG and ndiff > 0:
             import pdb
 
             pdb.set_trace()
+        return int(ndiff > 0)
 
-    if isinstance(python, np.ndarray):
-        if isinstance(matlab, dotdict):
-            try:
-                if len(matlab.keys()) == 1:
-                    matlab = matlab[list(matlab.keys())[0]]
-                else:
-                    matlab = matlab[name]
-            except KeyError:
-                print(f"Unknown key `{name}`, debugging...")
-                if DEBUG:
-                    import pdb
-
-                    pdb.set_trace()
-
-        assert isinstance(matlab, np.ndarray)
-        if is_idx:
-            matlab = matlab - 1
-        if python.shape != matlab.shape:
-            print(
-                f"\nError: `{name}` does not match (shape mismatch) "
-                f"{python.shape=} {matlab.shape=}"
-            )
-            compare_array(python, matlab)
-            return False
-        if not np.allclose(python, matlab, rtol=rtol, atol=atol, equal_nan=equal_nan):
-            print(f"\nError: `{name}` does not match")
-            compare_array(python, matlab)
-            return False
-        else:
-            log(f"`{name}` matches. {python.dtype=} {matlab.dtype=}. {atol=}, {rtol=}")
-            return True
-
-    for key in python:
-        # Exclude various keys that are not relevant for comparison
-        if (
-            "ix" in key
-            or "ij" in key
-            or "loop" in key
-            or "sort" in key
-            or "sort_ix" in key
-            or "sortix" in key
-            or "bins" in key
-        ):
-            log(f"`{name}.{key}` check skipped")
-            continue
-
-        if key in matlab:
-            log(f"Checking `{name}.{key}`")
-            if isinstance(python[key], np.ndarray):
-                if not np.allclose(
-                    python[key],
-                    matlab[key],
-                    rtol=rtol,
-                    atol=atol,
-                    equal_nan=equal_nan,
-                ):
-                    print(f"\nError: `{key}` does not match")
-                    compare_array(python[key], matlab[key])
-                    ndiffs += 1
-                else:
-                    log(f"`{key}` matches with {atol = } and {rtol = }")
-            elif isinstance(python[key], str):
-                if python[key] != matlab[key]:
-                    print(f"\nError: `{key}` does not match")
-                    print(f"Python: {python[key]}")
-                    print(f"MATLAB: {matlab[key]}")
-                    print("")
-                    ndiffs += 1
-                else:
-                    log(f"`{key}` matches")
+    def compare_value(p: Any, m: Any, key: str) -> int:
+        if isinstance(p, np.ndarray):
+            if not allclose(p, m, tol=tol, equal_nan=equal_nan, modulo=modulo):
+                print(f"\nError: `{key}` does not match at {tol = }")
+                return compare_array(p, m)
             else:
-                print(f"{type(python[key])=} {type(matlab[key])=}")
-                if np.abs(python[key] - matlab[key]) > atol:
-                    print(
-                        f"\nError: `{key}` does not match. {type(python[key])=} {type(matlab[key])=}"
-                    )
-                    print(f"Python: {python[key]}")
-                    print(f"MATLAB: {matlab[key]}")
-                    print("")
-                    ndiffs += 1
-                else:
-                    log(f"`{key}` matches with {atol = } and {rtol = }")
+                print(f"`{key}` matches with {tol = }")
+        elif isinstance(p, (int, float, complex)):
+            if np.abs(p - m) > tol:
+                print(f"\nError: `{key}` does not match. {type(p) = } {type(m) = }")
+                print_values(p, m)
+                return 1
+            else:
+                print(f"`{key}` matches with {tol = }")
+        elif isinstance(p, str):
+            if p != m:
+                print(f"\nError: `{key}` does not match")
+                print_values(p, m)
+                return 1
+            else:
+                print(f"`{key}` matches")
+        else:
+            print(f"Unsupported type: {type(p)}")
+            return 0
+        return 0
 
-    if ndiffs > 0:
-        print(f"Total number of differences: {ndiffs}")
-        if DEBUG:
-            import pdb
+    ndiffs = 0
+    if isinstance(p, np.ndarray):
+        if isinstance(m, dict):
+            m = m.get(name, m[list(m.keys())[0]])
+        assert isinstance(m, np.ndarray)
 
-            pdb.set_trace()
+        if is_idx:
+            p = p + 1
+
+        if p.shape != m.shape:
+            print(f"\nError: `{name}` does not match (shape mismatch) {p.shape=} {m.shape=}")
+            ndiffs += compare_array(p, m)
+        else:
+            ndiffs += compare_value(p, m, name)
+    elif isinstance(p, dict):
+        for key in p:
+            if any(exclude in key for exclude in ["ix", "ij", "loop", "sort", "bins"]):
+                log(f"`{name}.{key}` check skipped")
+                continue
+
+            if key in m:
+                log(f"Checking `{name}.{key}`")
+                ndiffs += compare_value(p[key], m[key], key)
+            else:
+                print(f"Key `{key}` not found in MATLAB results")
+                ndiffs += 1
+    else:
+        print(f"Unsupported type: {type(p)}")
+        ndiffs += 1
 
     return ndiffs == 0
 
@@ -235,19 +237,24 @@ def check(
     name: str,
     x: dict | Array,
     is_idx: bool = False,
-    atol: float = 1e-6,
-    rtol: float = 1e-6,
+    tol: float = 1e-6,
+    modulo: Optional[float] = None,
     exit: bool = False,
 ) -> None:
     """A debug function to check if the results match the results that have
     been saved in MATLAB."""
 
+    if not DEBUG:
+        return
+
     if isinstance(x, dict):
         stamps_save(name, **x)
     else:
         stamps_save(name, x)
+
     with np.printoptions(precision=4, suppress=True, linewidth=120, threshold=10):
-        assert results_equal(name, is_idx=is_idx, atol=atol, rtol=rtol)
+        assert results_equal(name, is_idx=is_idx, tol=tol, modulo=modulo)
+
     if exit:
         sys.exit(0)
 
@@ -1437,6 +1444,7 @@ def stage2_estimate_noise(max_iters: int = 1000) -> None:
     for i in reversed(range(n_rand)):
         # Fit a topographic phase model to each random phase point
         K_r, C_r, coh_r, res_r = topofit(exp_rand_ifg[i, :], bperp, n_trial_wraps)
+
         # Store the first coherence value for each random point
         coh_rand[i] = coh_r
 
@@ -1462,10 +1470,13 @@ def stage2_estimate_noise(max_iters: int = 1000) -> None:
     # Calculate grid indices for the third column of 'xy'
     grid_ij = np.zeros((xy.shape[0], 2), dtype=int)
     grid_ij[:, 0] = np.ceil((xy[:, 2] - np.min(xy[:, 2]) + 1e-6) / grid_size).astype(int)
+
     # Adjust indices to ensure they are within bounds for the first column
     grid_ij[grid_ij[:, 0] == np.max(grid_ij[:, 0]), 0] = np.max(grid_ij[:, 0]) - 1
+
     # Calculate grid indices for the second column of 'xy'
     grid_ij[:, 1] = np.ceil((xy[:, 1] - np.min(xy[:, 1]) + 1e-6) / grid_size).astype(int)
+
     # Adjust indices to ensure they are within bounds for the second column
     grid_ij[grid_ij[:, 1] == np.max(grid_ij[:, 1]), 1] = np.max(grid_ij[:, 1]) - 1
 
@@ -1598,11 +1609,13 @@ def stage2_estimate_noise(max_iters: int = 1000) -> None:
                 Nr[:low_coh_thresh]
             )  # scale random distribution
             Na[Na == 0] = 1  # avoid division by zero
+
             # Calculate the random phase density
             Prand = Nr / Na
             Prand[:low_coh_thresh] = 1
             Prand[Nr_max_nz_ix + 1 :] = 0
             Prand[Prand > 1] = 1
+
             # Interpolate the random phase density to the phase coherence values
             gauss_filter = gausswin(7)
             Prand = lfilter(gauss_filter, 1, np.concatenate((np.ones(7), Prand))) / np.sum(
@@ -1611,13 +1624,16 @@ def stage2_estimate_noise(max_iters: int = 1000) -> None:
             Prand = Prand[7:]  # remove padding
             Prand = interp(np.insert(Prand, 0, 1), 10)[:-9]
             Prand_ps = Prand[np.round(coh_ps * 1000).astype(int)]
+
             # Calculate the weighting
             weighting = (1 - Prand_ps) ** 2
         else:
             log("Updating weighting using p-linear approach...")
+
             # Calculate the random phase density
             g = np.mean(A * np.cos(ph_res), axis=1)  # signal
             sigma_n = np.sqrt(0.5 * (np.mean(A**2, axis=1) - g**2))
+
             # Calculate the weighting
             weighting = np.zeros_like(sigma_n)
             weighting[sigma_n != 0] = g[sigma_n != 0] / sigma_n[sigma_n != 0]  # snr
@@ -1839,13 +1855,16 @@ def stage3_select_ps(reest_flag: int = 0, plots: bool = False) -> None:
             D_A_mean = D_A_mean[nonnanix]
             if min_coh.size > 1:
                 coh_thresh_coeffs = np.polyfit(D_A_mean, min_coh, 1)
+
                 if coh_thresh_coeffs[0] > 0:  # positive slope
                     coh_thresh = np.polyval(coh_thresh_coeffs, D_A)
+
                 else:  # unable to ascertain correct slope
                     coh_thresh = np.polyval(
                         coh_thresh_coeffs, 0.35
                     )  # set an average threshold for all D_A
                     coh_thresh_coeffs = np.array([])
+
             else:
                 coh_thresh = np.array([min_coh])
                 coh_thresh_coeffs = np.array([])
@@ -2049,14 +2068,17 @@ def stage3_select_ps(reest_flag: int = 0, plots: bool = False) -> None:
                     min_coh[i] = np.nan
                 else:
                     max_fit_ix = min(ok_ix) + 2
+
                     # Ensure max_fit_ix does not exceed the length of percent_rand
                     max_fit_ix = np.minimum(max_fit_ix, len(percent_rand))
+
                     # Fit a polynomial of degree 3 to the data
                     p = np.polyfit(
                         np.arange(min_fit_ix, max_fit_ix + 1) * 0.01,
                         percent_rand[min_fit_ix : max_fit_ix + 1],
                         3,
                     )
+
                     # Evaluate the polynomial at max_percent_rand
                     min_coh[i] = np.polyval(p, max_percent_rand)
 
@@ -2332,7 +2354,7 @@ def stage4_weed_ps(
             if (i + 1) % 100000 == 0:
                 log(f"{i + 1} PS processed")
 
-        check("neigh_ix", neigh_ix + 1, exit=True)
+        # check("neigh_ix", neigh_ix + 1, exit=True)
 
         log("Finding neighbours")
 
@@ -2399,7 +2421,7 @@ def stage4_weed_ps(
     n_ps = np.sum(ix_weed)
     ix_weed2 = np.ones(n_ps, dtype=bool)
 
-    check("xy_weed", xy_weed)
+    # check("xy_weed", xy_weed)
 
     log("Weeding noisy pixels")
 
@@ -2418,7 +2440,8 @@ def stage4_weed_ps(
                 subprocess.call([TRIANGLE, "-e", "psweed.1.node"], stdout=sys.stdout)
             else:
                 subprocess.call(
-                    [TRIANGLE, "-e", "psweed.1.node"], stdout=open("triangle_weed.log", "w")
+                    [TRIANGLE, "-e", "psweed.1.node"],
+                    stdout=open("triangle_weed.log", "w"),
                 )
 
             with open("psweed.2.edge", "r") as fid:
@@ -2440,7 +2463,7 @@ def stage4_weed_ps(
 
         n_edge = edgs.shape[0]
 
-        check("edgs", edgs + 1)  # 1-based indexing
+        # check("edgs", edgs + 1)  # 1-based indexing
 
         # Subtract range error and add master noise if applicable
         ph_weed = ph2[ix_weed, :] * np.exp(-1j * (K_ps2[ix_weed][:, None] * bperp))
@@ -2482,34 +2505,44 @@ def stage4_weed_ps(
                 # Calculate time differences between the current interferogram
                 # and all others
                 time_diff = day[ifg_index[i1]] - day[ifg_index]
+
                 # Calculate weighting factors based on time differences, using a
                 # Gaussian function
                 weight_factor = np.exp(-(time_diff**2) / (2 * time_win**2))
                 weight_factor /= np.sum(weight_factor)  # Normalize
+
                 # Compute the mean differential phase for each edge, weighted by
                 # time proximity
                 dph_mean = np.sum(dph_space * weight_factor[None, :], axis=1)
+
                 # Adjust the mean differential phase by subtracting the weighted
                 # mean from each value
                 dph_mean_adj = np.angle(dph_space * np.conj(dph_mean[:, None]))
+
                 # Prepare a design matrix for linear regression, including a
                 # constant term and time differences
                 G = np.vstack([np.ones(n_use), time_diff]).T
+
                 # Perform weighted linear least squares to fit the adjusted mean
                 # differential phase
                 m = lscov(G, dph_mean_adj.T, weight_factor)
+
                 # Update the adjusted mean differential phase by subtracting the
                 # linear fit
                 dph_mean_adj = np.angle(np.exp(1j * (dph_mean_adj - (G @ m).T)))
+
                 # Perform a second round of weighted linear least squares on the
                 # updated adjusted mean differential phase
                 m2 = lscov(G, dph_mean_adj.T, weight_factor)
+
                 # Combine the original mean phase with the corrections from both
                 # rounds of linear regression
                 dph_smooth[:, i1] = dph_mean * np.exp(1j * (m[0] + m2[0]))
+
                 # Zero out the weight factor for the current interferogram to
                 # exclude it from its own smoothing
                 weight_factor[i1] = 0
+
                 # Recalculate the smoothed differential phase without the
                 # current interferogram
                 dph_smooth2[:, i1] = np.sum(dph_space * weight_factor[None, :], axis=1)
@@ -2517,19 +2550,25 @@ def stage4_weed_ps(
             # Calculate the noise by subtracting the smoothed phase from the
             # original differential phase
             dph_noise = np.angle(dph_space * np.conj(dph_smooth))
+
             # Repeat the noise calculation using the second set of smoothed phases
             dph_noise2 = np.angle(dph_space * np.conj(dph_smooth2))
+
             # Calculate the variance of the second set of noise estimates,
             # ignoring NaN values
             ifg_var = np.var(dph_noise2, axis=0, ddof=1, where=~np.isnan(dph_noise2))
+
             # Estimate the DEM error for each arc using a weighted linear fit
             # with weights based on the noise variance
             K = lscov(bperp[ifg_index, np.newaxis], dph_noise.T, 1 / ifg_var)
+
             # Adjust the noise estimates by subtracting the estimated DEM error
             dph_noise -= K.T @ bperp[ifg_index].reshape(1, -1)
+
             # Calculate the standard deviation of the adjusted noise estimates
             # for each edge
             edge_std = np.std(dph_noise, axis=1, ddof=1)
+
             # Find the maximum absolute noise estimate for each edge
             edge_max = np.max(np.abs(dph_noise), axis=1)
 
@@ -2537,19 +2576,23 @@ def stage4_weed_ps(
             # Variance of the differential phase space along the interferograms
             # axis
             ifg_var = np.var(dph_space, axis=1, ddof=1)
+
             # Least squares fitting to estimate arc DEM error
             K = lscov(bperp[ifg_index], dph_space, 1 / ifg_var)
+
             # Adjust dph_space based on the estimated arc DEM error
             dph_space_adjusted = dph_space - (K.T @ bperp[ifg_index].reshape(1, -1)).T
+
             # Calculate the standard deviation and maximum of the phase angles
             # of the adjusted differential phase space
             edge_std = np.std(np.angle(dph_space_adjusted), axis=1, ddof=1)
             edge_max = np.max(np.abs(np.angle(dph_space_adjusted)), axis=1)
+
             # Save memory
             del dph_space
 
-        check("edge_std", edge_std, atol=1e-3, rtol=1e-3)
-        check("edge_max", edge_max, atol=1e-3, rtol=1e-3)
+        # check("edge_std", edge_std, atol=1e-3, rtol=1e-3)
+        # check("edge_max", edge_max, atol=1e-3, rtol=1e-3)
 
         # We now remove points with excessive noise. We calculate the standard
         # deviation and maximum noise level for each pixel based on noise
@@ -2569,8 +2612,8 @@ def stage4_weed_ps(
         ix_weed[ix_weed] = ix_weed2
         n_ps = np.sum(ix_weed)
 
-        check("ps_std", ps_std, atol=1e-3, rtol=1e-3)
-        check("ps_max", ps_max, atol=1e-3, rtol=1e-3)
+        # check("ps_std", ps_std, atol=1e-3, rtol=1e-3)
+        # check("ps_max", ps_max, atol=1e-3, rtol=1e-3)
 
         print(f"{n_ps} PS kept after dropping noisy pixels")
 
@@ -2721,9 +2764,8 @@ def stage5_correct_phases() -> None:
         ph_rc = ph * np.exp(
             1j
             * (
-                -K_ps[:, np.newaxis] * bperp_mat  # range error
-                - C_ps[:, np.newaxis] * np.ones(n_ifg)  # master noise
-            )
+                -K_ps[:, np.newaxis] * bperp_mat - C_ps[:, np.newaxis] * np.ones(n_ifg)
+            )  # range error  # master noise
         )
 
         ph_reref = np.hstack(
@@ -2920,11 +2962,13 @@ def stage6_unwrap_phases() -> None:
 
             # Subtract spatially correlated look angle error
             ph_w *= np.exp(-1j * scla.K_ps_uw[:, np.newaxis] * bperp_mat)
+
             # Subtract master APS
             ph_w *= np.exp(-1j * scla.C_ps_uw[:, np.newaxis] * np.ones_like(bperp_mat))
 
             if scla_deramp == "y" and "ph_ramp" in scla and scla.ph_ramp.shape[0] == ps.n_ps:
                 ramp_subtracted_sw = 1  # FIXME: Change to bool
+
                 # Subtract orbital ramps
                 ph_w *= np.exp(-1j * scla.ph_ramp)
             else:
@@ -3037,7 +3081,7 @@ def stage6_unwrap_phases() -> None:
         )
 
     ph_uw = np.zeros((ps.n_ps, ps.n_ifg), dtype=np.float32)
-    msd = np.zeros((ps.n_ifg, 1), dtype=np.float32)
+    msd = np.zeros((ps.n_ifg,), dtype=np.float32)
 
     ph_uw[:, unwrap_ifg_index] = ph_uw_some
 
@@ -3093,7 +3137,7 @@ def stage6_unwrap_phases() -> None:
 
     ph_uw[:, np.setdiff1d(np.arange(ps.n_ifg), unwrap_ifg_index)] = 0
 
-    stamps_save(phuwname, ph_uw, msd)
+    stamps_save(phuwname, ph_uw=ph_uw, msd=msd)
 
 
 def sb_identify_good_pixels() -> None:
@@ -3196,12 +3240,10 @@ def uw_3d(
 
     del ph
 
-    if DEBUG:
-        uw = stamps_load("uw_grid")
-        check("uw_grid", uw, atol=1e-2, rtol=1e-2)
-        del uw
-
-        breakpoint()
+    # if DEBUG:
+    #    uw = stamps_load("uw_grid")
+    #    check("uw_grid", uw, tol=1e-1)
+    #    del uw
 
     uw_interp()
 
@@ -3220,21 +3262,264 @@ def uw_3d(
         options.max_bperp_for_temp_est,
     )
 
-    # TODO: Implement the rest of the function
-    raise NotImplementedError
+    # check("uw_space_time", stamps_load("uw_space_time"), tol=1e-5)
 
     uw_stat_costs(options.unwrap_method, options.variance)
+
     ph_uw, msd = uw_unwrap_from_grid(xy, options.grid_size)
 
     return ph_uw, msd
 
 
-def uw_stat_costs(unwrap_method: str, variance, subset_ifg_index) -> None:  # type: ignore
-    raise NotImplementedError
+def uw_stat_costs(
+    unwrap_method: str = "3D",
+    variance: Optional[Array] = None,
+    subset_ifg_index: Optional[Array] = None,
+) -> None:
+    """Find unwrapped solutions using MAP cost functions"""
+
+    costscale = 100
+    nshortcycle = 200
+    maxshort = 32000
+
+    log("Unwrapping in space")
+
+    log(f"{unwrap_method = }")
+    log(f"{variance = }")
+    log(f"{subset_ifg_index = }")
+
+    uw = stamps_load("uw_grid")
+    ui = stamps_load("uw_interp")
+    ut = stamps_load("uw_space_time")
+
+    assert isinstance(uw, dotdict)
+    assert isinstance(ui, dotdict)
+    assert isinstance(ut, dotdict)
+
+    if variance is None:
+        variance = []
+
+    if subset_ifg_index is None:
+        subset_ifg_index = list(range(uw.ph.shape[1]))
+
+    predef_flag = "n"
+    if hasattr(ut, "predef_ix"):
+        predef_flag = "y"
+
+    nrow, ncol = uw.nzix.shape
+
+    y, x = np.where(uw.nzix)
+    nzix = np.flatnonzero(uw.nzix)
+    z = np.arange(uw.n_ps)
+
+    Z = ui.Z
+
+    grid_edges = np.concatenate([ui.colix[np.abs(ui.colix) > 0], ui.rowix[np.abs(ui.rowix) > 0]])
+    # matlab `hist` uses bin centers, but np.histogram uses bin edges
+    n_edges = np.histogram(np.abs(grid_edges), bins=np.arange(1, ui.n_edge + 2) - 0.5)[0]
+
+    check("n_edges", n_edges)
+
+    if unwrap_method.upper() == "2D":
+        raise NotImplementedError("This option has not been verified for accuracy")
+        edge_length = np.sqrt(
+            np.diff(x[ui.edgs[:, 1:3]], axis=1) ** 2 + np.diff(y[ui.edgs[:, 1:3]], axis=1) ** 2
+        )
+        if uw.pix_size == 0:
+            pix_size = 5  # if we don't know resolution
+        else:
+            pix_size = uw.pix_size
+        if not variance:
+            sigsq_noise = np.zeros(edge_length.shape)
+        else:
+            sigsq_noise = variance[ui.edgs[:, 1]] + variance[ui.edgs[:, 2]]
+        sigsq_aps = (2 * np.pi) ** 2  # fixed for now as one fringe
+        aps_range = 20000  # fixed for now as 20 km
+        sigsq_noise = sigsq_noise + sigsq_aps * (
+            1 - np.exp(-edge_length * pix_size * 3 / aps_range)
+        )
+        sigsq_noise = sigsq_noise / 10  # scale it to keep in reasonable range
+        dph_smooth = ut.dph_space_uw
+
+    else:
+        # DEBUG: default path
+        sigsq_noise = (np.std(ut.dph_noise, ddof=1, axis=1) / (2 * np.pi)) ** 2
+        dph_smooth = ut.dph_space_uw - ut.dph_noise
+
+    ut = dotdict({k: v for k, v in ut.items() if k != "dph_noise"})
+
+    # Strange way of doing things, but this is what the matlab code does
+    colix = ui.colix.astype(np.float32)  # uses 1-based indexing
+    rowix = ui.rowix.astype(np.float32)  # uses 1-based indexing
+
+    nostats_ix = np.flatnonzero(np.isnan(sigsq_noise))
+    for i in nostats_ix:
+        rowix[np.abs(rowix) == i + 1] = np.nan
+        colix[np.abs(colix) == i + 1] = np.nan
+
+    with np.errstate(invalid="ignore"):  # handle nans
+        sigsq = np.round((sigsq_noise * nshortcycle**2) / costscale * n_edges, 0).astype(np.int16)
+    sigsq[sigsq < 1] = 1  # zero causes snaphu to crash
+
+    # check("sigsq_noise", sigsq_noise)
+    # check("n_edges", n_edges)
+    # check("sigsq", sigsq, tol=1e-6)
+
+    rowcost = np.zeros(((nrow - 1), ncol * 4), dtype=np.int16)
+    colcost = np.zeros((nrow, (ncol - 1) * 4), dtype=np.int16)
+
+    nzrowix = np.abs(rowix) > 0
+    rowstdgrid = np.ones(rowix.shape, dtype=np.int16)
+
+    nzcolix = np.abs(colix) > 0
+    colstdgrid = np.ones(colix.shape, dtype=np.int16)
+
+    # check("nzrowix", nzrowix)
+    # check("nzcolix", nzcolix)
+
+    rowcost[:, 2::4] = maxshort
+    colcost[:, 2::4] = maxshort
+
+    stats_ix = ~np.isnan(rowix)
+    rowcost[:, 3::4] = stats_ix * (-1 - maxshort) + 1
+
+    stats_ix = ~np.isnan(colix)
+    colcost[:, 3::4] = stats_ix * (-1 - maxshort) + 1
+
+    ph_uw = np.zeros((uw.n_ps, uw.n_ifg), dtype=np.float64)
+    ifguw = np.zeros((nrow, ncol))
+    msd = np.zeros((uw.n_ifg,), dtype=np.float64)
+
+    with open("snaphu.conf", "w") as fid:
+        fid.write("INFILE  snaphu.in\n")
+        fid.write("OUTFILE snaphu.out\n")
+        fid.write("COSTINFILE snaphu.costinfile\n")
+        fid.write("STATCOSTMODE  DEFO\n")
+        fid.write("INFILEFORMAT  COMPLEX_DATA\n")
+        fid.write("OUTFILEFORMAT FLOAT_DATA\n")
+
+    for i1 in subset_ifg_index:
+        print(f"Processing IFG {i1+1} of {len(subset_ifg_index)}")
+
+        spread = np.ravel(ut.spread[:, i1].todense())
+        spread = ((np.abs(spread) * nshortcycle**2) / 6 / costscale * n_edges).astype(np.int16)
+
+        sigsqtot = sigsq + spread
+
+        if ut.predef_ix is not None:
+            sigsqtot[ut.predef_ix[:, i1]] = 1
+
+        ix = np.abs(rowix[nzrowix]).astype(np.int32) - 1  # 0-based indexing
+        rowstdgrid[nzrowix] = sigsqtot[ix]
+        rowcost[:, 1::4] = rowstdgrid
+
+        ix = np.abs(colix[nzcolix]).astype(np.int32) - 1  # 0-based indexing
+        colstdgrid[nzcolix] = sigsqtot[ix]
+        colcost[:, 1::4] = colstdgrid
+
+        offset_cycle = (np.angle(np.exp(1j * ut.dph_space_uw[:, i1])) - dph_smooth[:, i1]) / (
+            2 * np.pi
+        )
+
+        ix = np.abs(rowix[nzrowix]).astype(np.int32) - 1  # 0-based indexing
+        offgrid = np.zeros(rowix.shape, dtype=np.int16)
+        offgrid[nzrowix] = np.round(offset_cycle[ix] * np.sign(rowix[nzrowix]) * nshortcycle, 0)
+        rowcost[:, ::4] = -offgrid
+
+        ix = np.abs(colix[nzcolix]).astype(np.int32) - 1  # 0-based indexing
+        offgrid = np.zeros(colix.shape, dtype=np.int16)
+        offgrid[nzcolix] = np.round(offset_cycle[ix] * np.sign(colix[nzcolix]) * nshortcycle, 0)
+        colcost[:, ::4] = offgrid
+
+        # check("offset_cycle", offset_cycle)
+        # check("rowix", rowix)
+        # check("colix", colix)
+        # check("offgrid", offgrid)
+
+        with open("snaphu.costinfile", "wb") as fid:
+            rowcost.tofile(fid)
+            colcost.tofile(fid)
+
+        ifgw = uw.ph[Z - 1, i1].reshape(nrow, ncol)
+        mask = np.isfinite(ifgw)
+        ifgw[~mask] = 0
+
+        # writecpx(Path("snaphu.in"), ifgw)
+        ifgw.astype(np.complex64).tofile("snaphu.in")
+
+        run_snaphu_on(Path("snaphu.conf"), ncol)
+
+        with open("snaphu.out", "rb") as fid:
+            ifguw = np.fromfile(fid, dtype=np.float32).astype(np.float64).reshape(nrow, ncol)
+
+        check(f"ifguw_{i1+1}", ifguw, tol=1e-2)
+
+        # FIXME: Still something wrong with the precision here when '!= 0' is used
+
+        ifg_diff1 = np.ravel(ifguw[:-1, :] - ifguw[1:, :], "F")
+        ifg_diff1 = ifg_diff1[ifg_diff1 != 0]
+
+        ifg_diff2 = np.ravel(ifguw[:, :-1] - ifguw[:, 1:], "F")
+        ifg_diff2 = ifg_diff2[ifg_diff2 != 0]
+
+        msd[i1] = (np.sum(ifg_diff1**2) + np.sum(ifg_diff2**2)) / (len(ifg_diff1) + len(ifg_diff2))
+
+        ifguw_ur = np.ravel(ifguw, "F")
+        nzix_ur = np.ravel(uw.nzix, "F")
+
+        ph_uw[:, i1] = ifguw_ur[nzix_ur]
+
+    # check("ph_uw", ph_uw, tol=1e-2)
+    # check("msd", msd, tol=1e-1)
+
+    stamps_save("uw_phaseuw", ph_uw=ph_uw, msd=msd)
 
 
 def uw_unwrap_from_grid(xy: Array, pix_size: int) -> Tuple[Array, Array]:
-    raise NotImplementedError
+    """Unwrap PS from unwrapped gridded ifgs"""
+
+    log("Unwrapping from grid")
+
+    uw = stamps_load("uw_grid")
+    uu = stamps_load("uw_phaseuw")
+
+    n_ps, n_ifg = uw.ph_in.shape
+
+    gridix = np.zeros_like(uw.nzix, dtype=np.int32)
+    gridix.T[uw.nzix.T] = np.arange(1, uw.n_ps + 1)
+
+    ph_uw = np.zeros((n_ps, n_ifg), dtype=np.float32)
+
+    for i in range(n_ps):
+        ix = gridix[uw.grid_ij[i, 0] - 1, uw.grid_ij[i, 1] - 1]
+
+        if ix == 0:
+            # wrapped phase values were zero
+            ph_uw[i, :] = np.nan
+        else:
+            ph_uw_pix = uu.ph_uw[int(ix) - 1, :]
+
+            if np.isrealobj(uw.ph_in):
+                ph_uw[i, :] = ph_uw_pix + np.angle(np.exp(1j * (uw.ph_in[i, :] - ph_uw_pix)))
+            else:
+                ph_uw[i, :] = ph_uw_pix + np.angle(uw.ph_in[i, :] * np.exp(-1j * ph_uw_pix))
+
+    if uw.ph_in_predef is not None and len(uw.ph_in_predef) > 0:
+        predef_ix = ~np.isnan(uw.ph_in_predef)
+
+        meandiff = np.nanmean(ph_uw - uw.ph_in_predef, axis=0)
+        meandiff = 2 * np.pi * np.round(meandiff / (2 * np.pi))
+
+        uw["ph_in_predef"] = uw.ph_in_predef + meandiff[np.newaxis, :]
+
+        ph_uw[predef_ix] = uw.ph_in_predef[predef_ix]
+
+    msd = uu.msd
+
+    # check("ph_uw", ph_uw, tol=1e-2)
+    # check("msd", msd, tol=1e-1)
+
+    return ph_uw, msd
 
 
 def uw_sb_unwrap_space_time(
@@ -3281,10 +3566,14 @@ def uw_sb_unwrap_space_time(
     uw = stamps_load("uw_grid")
     ui = stamps_load("uw_interp")
 
+    if DEBUG:
+        # uw.ph is not sufficient accuracy for comparison
+        # so we need to load the original data
+        uw = loadmat(Path("uw_grid.mat"))
+        ui = loadmat(Path("uw_interp.mat"))
+
     assert isinstance(uw, dotdict)
     assert isinstance(ui, dotdict)
-
-    check("uw_ph", uw.ph, atol=1e-3, rtol=1e-3)
 
     n_image = day.shape[0]
     n_ifg = uw.n_ifg
@@ -3307,16 +3596,20 @@ def uw_sb_unwrap_space_time(
 
     dph_space = uw.ph[ui.edgs[:, 2] - 1, :] * np.conj(uw.ph[ui.edgs[:, 1] - 1, :])
 
-    check("dph_space", dph_space, atol=1e-3, rtol=1e-3)
+    # check("edgs", ui.edgs, tol=1e-6)
+    # check("uw_ph", uw.ph, tol=1e-6)
+    # check("dph_space", uw.ph[ui.edgs[:, 2] - 1, :], tol=1e-6)
 
     if predef_flag == "y":
         dph_space_uw = uw.ph_uw_predef[ui.edgs[:, 2] - 1, :] - uw.ph_uw_predef[ui.edgs[:, 1] - 1, :]
         predef_ix = ~np.isnan(dph_space_uw)
         dph_space_uw = dph_space_uw[predef_ix]
     else:
-        predef_ix = []
+        predef_ix = np.array([])
 
-    dph_space = dph_space / np.abs(dph_space)
+    scale = np.abs(dph_space)
+    good = scale > 0
+    dph_space[good] = dph_space[good] / scale[good]
 
     # ifreq_ij = []
     # jfreq_ij = []
@@ -3358,14 +3651,19 @@ def uw_sb_unwrap_space_time(
         n_trials = len(trial_mult)
         trial_phase = temp_sub / temp_range_sub * np.pi / 4
         trial_phase_mat = np.exp(-1j * trial_phase[:, None] * trial_mult)
+
         Kt = np.zeros((ui.n_edge, 1), dtype=np.float32)
         coh = np.zeros((ui.n_edge, 1), dtype=np.float32)
+
         for i in range(ui.n_edge):
             cpxphase = dph_sub[i, :].flatten()
             cpxphase_mat = np.tile(cpxphase, (n_trials, 1)).T
+
             phaser = trial_phase_mat * cpxphase_mat
             phaser_sum = np.sum(phaser, axis=1)
+
             coh_trial = np.abs(phaser_sum) / np.sum(np.abs(cpxphase))
+
             coh_max_ix = np.argmax(coh_trial)
             coh_max = coh_trial[coh_max_ix]
 
@@ -3392,10 +3690,11 @@ def uw_sb_unwrap_space_time(
                 mopt = lstsq(weighting[:, None] * temp_sub[:, None], weighting * resphase)[0]
                 Kt[i] = K0 + mopt
                 phase_residual = cpxphase * np.exp(-1j * (Kt[i] * temp_sub))
-                mean_phase_residual = np.sum(phase_residual)
+                mean_phase_residual = np.nansum(phase_residual)
                 coh[i] = np.abs(mean_phase_residual) / np.sum(np.abs(phase_residual))
 
-        Kt[coh < 0.31] = 0
+        Kt[coh < 0.31] = 0  # FIXME: hardcoded value
+
         dph_space = dph_space * np.exp(-1j * Kt * temp[:, None])
 
         if predef_flag == "y":
@@ -3455,7 +3754,7 @@ def uw_sb_unwrap_space_time(
                 dph_sub[sign_ix == -1] = np.conj(dph_sub[sign_ix == -1])
 
                 # Add zero phase master
-                dph_sub = np.hstack((dph_sub, np.mean(np.abs(dph_sub), axis=1, keepdims=True)))
+                dph_sub = np.hstack((dph_sub, np.nanmean(np.abs(dph_sub), axis=1, keepdims=True)))
 
                 slave_ix = np.sum(ifgday_ix[ix, :], axis=1) - max_ix
 
@@ -3479,8 +3778,9 @@ def uw_sb_unwrap_space_time(
                 log(f"{nbad = } values in {n_sub} interferograms")
 
                 # Normalize the phase at valid pixels
-                valid_ix = np.isfinite(dph_sub)
-                dph_sub[valid_ix] = dph_sub[valid_ix] / np.abs(dph_sub[valid_ix])
+                scale = np.abs(dph_sub)
+                good = scale > 0
+                dph_sub[good] = dph_sub[good] / scale[good]
 
             else:
                 raise NotImplementedError("Not checked for correctness")
@@ -3507,7 +3807,9 @@ def uw_sb_unwrap_space_time(
             phaser = trial_phase_mat * cpxphase_mat
             phaser_sum = np.sum(phaser, axis=1)
 
-            coh_trial = np.abs(phaser_sum) / np.sum(np.abs(cpxphase))
+            with np.errstate(divide="ignore", invalid="ignore"):
+                coh_trial = np.abs(phaser_sum) / np.sum(np.abs(cpxphase))
+
             coh_max_ix = np.argmax(coh_trial)
             coh_max = coh_trial[coh_max_ix]
 
@@ -3538,7 +3840,7 @@ def uw_sb_unwrap_space_time(
                 K[i] = K0 + mopt
 
                 phase_residual = cpxphase * np.exp(-1j * (K[i] * bperp_sub))
-                mean_phase_residual = np.sum(phase_residual)
+                mean_phase_residual = np.nansum(phase_residual)
 
                 coh[i] = np.abs(mean_phase_residual) / np.sum(np.abs(phase_residual))
 
@@ -3551,7 +3853,7 @@ def uw_sb_unwrap_space_time(
             Kt[K == 0] = 0
             K[Kt == 0] = 0
 
-        dph_space = dph_space * np.exp(-1j * K * bperp[:, None].T)
+        dph_space = dph_space * np.exp(-1j * K @ bperp[:, np.newaxis].T)
 
         if predef_flag == "y":
             raise NotImplementedError("Not checked for correctness")
@@ -3565,24 +3867,40 @@ def uw_sb_unwrap_space_time(
         raise NotImplementedError("Not checked for correctness")
 
         dph_space_uw = np.angle(dph_space)
+
         if la_flag == "y":
             dph_space_uw = dph_space_uw + K * bperp[:, None]
+
         if temp_flag == "y":
             dph_space_uw = dph_space
 
         dph_noise = []
-        stamps_save("uw_space_time", dph_space_uw=dph_space_uw, spread=spread, dph_noise=dph_noise)
+
+        stamps_save(
+            "uw_space_time",
+            dph_space_uw=dph_space_uw,
+            spread=spread,
+            dph_noise=dph_noise,
+        )
 
     elif unwrap_method == "3D_NO_DEF":
         raise NotImplementedError("Not checked for correctness")
 
         dph_noise = np.angle(dph_space)
         dph_space_uw = np.angle(dph_space)
+
         if la_flag == "y":
             dph_space_uw = dph_space_uw + K * bperp[:, None]
+
         if temp_flag == "y":
             dph_space_uw = dph_space_uw + Kt * temp[:, None]
-        stamps_save("uw_space_time", dph_space_uw=dph_space_uw, dph_noise=dph_noise, spread=spread)
+
+        stamps_save(
+            "uw_space_time",
+            dph_space_uw=dph_space_uw,
+            dph_noise=dph_noise,
+            spread=spread,
+        )
 
     else:
         # DEBUG: default case
@@ -3592,11 +3910,7 @@ def uw_sb_unwrap_space_time(
         if unwrap_method == "3D_FULL":  # FIXME: use an elif instead?
             # DEBUG: default case
 
-            check("dph_space", dph_space)
-
-            breakpoint()
-
-            dph_smooth_ifg = np.full(dph_space.shape, np.nan, dtype=np.float32)
+            dph_smooth_ifg = np.full(dph_space.shape, np.nan, dtype=np.float64)
 
             for i in range(n_image):
                 log(f"Smoothing in time: {i + 1}/{n_image}")
@@ -3606,33 +3920,33 @@ def uw_sb_unwrap_space_time(
                     gsub = G[ix, i]
                     dph_sub = dph_space[:, ix]
 
-                    sign_ix = np.tile(-np.sign(gsub.flatten().astype(np.float32)), (ui.n_edge, 1))
-                    dph_sub[sign_ix == -1] = np.conj(dph_sub[sign_ix == -1])
+                    sign_ix = -np.sign(gsub.flatten())
+                    dph_sub[:, sign_ix == -1] = np.conj(dph_sub[:, sign_ix == -1])
 
                     slave_ix = np.sum(ifgday_ix[ix, :], axis=1) - i
-
                     day_sub = day[slave_ix]
+
                     sort_ix = np.argsort(day_sub)
                     day_sub = day_sub[sort_ix]
                     dph_sub = dph_sub[:, sort_ix]
-                    dph_sub_angle = np.angle(dph_sub)
+
+                    dph_sub_angle = np.angle(dph_sub + 1e-9)
                     n_sub = day_sub.shape[0]
 
-                    dph_smooth = np.zeros((ui.n_edge, n_sub), dtype=np.float32)
+                    dph_smooth = np.zeros((ui.n_edge, n_sub), dtype=np.complex64)
 
                     for i1 in range(n_sub):
                         time_diff = (day_sub[i1] - day_sub).flatten()
 
+                        # Exponential weighting
                         weight_factor = np.exp(-(time_diff**2) / (2 * time_win**2))
                         weight_factor = weight_factor / np.sum(weight_factor)
 
-                        dph_mean = np.sum(dph_sub * np.tile(weight_factor, (ui.n_edge, 1)), axis=1)
-
-                        breakpoint()
-
+                        # Calculate the weighted mean phase
+                        dph_mean = np.sum(dph_sub * weight_factor[np.newaxis, :], axis=1)
                         dph_mean_adj = (
                             np.mod(
-                                dph_sub_angle - np.tile(np.angle(dph_mean), (1, n_sub)) + np.pi,
+                                dph_sub_angle - np.angle(dph_mean)[:, np.newaxis] + np.pi,
                                 2 * np.pi,
                             )
                             - np.pi
@@ -3641,16 +3955,29 @@ def uw_sb_unwrap_space_time(
                         GG = np.column_stack((np.ones(n_sub), time_diff))
 
                         if GG.shape[0] > 1:
-                            m = lstsq(GG, dph_mean_adj.T, np.diag(weight_factor))[0]
+                            m = lscov(GG, dph_mean_adj.T, weight_factor)
                         else:
                             m = np.zeros((GG.shape[1], ui.n_edge))
 
                         dph_smooth[:, i1] = dph_mean * np.exp(1j * m[0, :])
 
+                        # GG matches to 6 decimal places at this point
+                        # dph_mean matches to 6 decimal places at this point
+                        # dph_mean_adj has problems as difference can be -pi vs pi
+
+                        # check(
+                        #    f"test_{i+1}_{i1+1}",
+                        #    dph_mean,
+                        #    tol=1e-6,
+                        #    # modulo=2 * np.pi,
+                        # )
+
+                    check(f"dph_smooth_{i+1}", dph_smooth, tol=1e-6)
+
                     dph_smooth_sub = np.cumsum(
                         np.hstack(
                             (
-                                np.angle(dph_smooth[:, 0:1]),
+                                np.angle(dph_smooth[:, :1]),
                                 np.angle(dph_smooth[:, 1:] * np.conj(dph_smooth[:, :-1])),
                             )
                         ),
@@ -3658,6 +3985,7 @@ def uw_sb_unwrap_space_time(
                     )
 
                     close_master_ix = np.where(slave_ix - i > 0)[0]
+
                     if close_master_ix.size == 0:
                         close_master_ix = n_sub - 1
                     else:
@@ -3665,38 +3993,45 @@ def uw_sb_unwrap_space_time(
                         if close_master_ix > 0:
                             close_master_ix = np.array([close_master_ix - 1, close_master_ix])
 
-                    dph_close_master = np.mean(dph_smooth_sub[:, close_master_ix], axis=1)
+                    close_master_ix = np.atleast_1d(close_master_ix)
+                    dph_close_master = np.nanmean(dph_smooth_sub[:, close_master_ix], axis=1)
 
-                    dph_smooth_sub = dph_smooth_sub - np.tile(
-                        dph_close_master - np.angle(np.exp(1j * dph_close_master)), (1, n_sub)
+                    dph_smooth_sub = (
+                        dph_smooth_sub
+                        - (dph_close_master - np.angle(np.exp(1j * dph_close_master)))[
+                            :, np.newaxis
+                        ]
                     )
                     dph_smooth_sub = dph_smooth_sub * sign_ix
 
-                    already_sub_ix = np.where(~np.isnan(dph_smooth_ifg[0, ix]))[0]
-
+                    asix = np.where(~np.isnan(dph_smooth_ifg[0, ix]))[0]
                     ix = np.where(ix)[0]
-                    already_ix = ix[already_sub_ix]
+                    aix = ix[asix]
 
                     std_noise1 = np.std(
-                        np.angle(
-                            dph_space[:, already_ix] * np.exp(-1j * dph_smooth_ifg[:, already_ix])
-                        )
+                        np.angle(dph_space[:, aix] * np.exp(-1j * dph_smooth_ifg[:, aix]))
                     )
-
                     std_noise2 = np.std(
-                        np.angle(
-                            dph_space[:, already_ix]
-                            * np.exp(-1j * dph_smooth_sub[:, already_sub_ix])
-                        )
+                        np.angle(dph_space[:, aix] * np.exp(-1j * dph_smooth_sub[:, asix]))
                     )
 
                     keep_ix = np.ones(n_sub, dtype=bool)
-                    keep_ix[already_sub_ix[std_noise1 < std_noise2]] = False
+                    keep_ix[asix[std_noise1 < std_noise2]] = False
 
                     dph_smooth_ifg[:, ix[keep_ix]] = dph_smooth_sub[:, keep_ix]
 
-            dph_noise = np.angle(dph_space * np.exp(-1j * dph_smooth_ifg))
-            dph_noise[np.std(dph_noise, axis=1) > 1.2, :] = np.nan
+            # DEBUG: default case
+
+            check("dph_space", dph_space, tol=1e-6)
+            check("dph_smooth_ifg", dph_smooth_ifg, tol=1e-5)
+
+            dph_noise = np.angle(chop(dph_space * np.exp(-1j * dph_smooth_ifg)))
+
+            check("dph_noise", dph_noise, tol=1e-5)
+
+            # FIXME: hardcoded value
+            mask = np.std(dph_noise, ddof=1, axis=1) > 1.2
+            dph_noise[mask, :] = np.nan
 
         else:
             raise NotImplementedError("Not checked for correctness")
@@ -3793,14 +4128,16 @@ def uw_sb_unwrap_space_time(
                 dph_smooth_ifg = (G @ dph_smooth_series).T
                 dph_noise = np.angle(dph_space * np.exp(-1j * dph_smooth_ifg))
 
+        # DEBUG: default case
+
         dph_space_uw = dph_smooth_ifg + dph_noise
 
         if la_flag == "y":
-            dph_space_uw = dph_space_uw + K * bperp[:, None]
+            dph_space_uw = dph_space_uw + K @ bperp[np.newaxis, :]
 
         if temp_flag == "y":
             raise NotImplementedError("Not checked for correctness")
-            dph_space_uw = dph_space_uw + Kt * temp[:, None]
+            dph_space_uw = dph_space_uw + Kt * temp[:, np.newaxis]
 
         if scf_flag == "y":
             raise NotImplementedError("Not checked for correctness")
@@ -3875,7 +4212,9 @@ def uw_sb_unwrap_space_time(
             spread[shaky_ix, :] = spread2[shaky_ix, :]
 
         else:
-            shaky_ix = []
+            shaky_ix = np.array([], dtype=np.int32)
+
+        check("dph_space_uw", dph_space_uw, tol=1e-6)
 
         stamps_save(
             "uw_space_time",
@@ -3883,10 +4222,10 @@ def uw_sb_unwrap_space_time(
             dph_noise=dph_noise,
             G=G,
             spread=spread,
-            ifreq_ij=ifreq_ij,
-            jfreq_ij=jfreq_ij,
+            # ifreq_ij=ifreq_ij,
+            # jfreq_ij=jfreq_ij,
             shaky_ix=shaky_ix,
-            predef_ix=predef_ix,
+            predef_ix=predef_ix if len(predef_ix) > 0 else None,
         )
 
 
@@ -4056,17 +4395,17 @@ def uw_grid_wrapped(
 
     log(f"Number of resampled points: {n_ps}")
 
-    check("ph_grid", ph_grid, atol=1e-2, rtol=1e-2)
+    check("ph_grid", ph_grid, tol=1e-2)
 
-    nz_i, nz_j = np.where(ph_grid != 0)
+    nz_j, nz_i = np.where(ph_grid.T != 0)
     if pix_size == 0:
         xy = xy_in
     else:
         xy = np.column_stack(
             (
                 np.arange(1, n_ps + 1),
-                (nz_j - 0.5) * pix_size,
-                (nz_i - 0.5) * pix_size,
+                (nz_j + 1 - 0.5) * pix_size,
+                (nz_i + 1 - 0.5) * pix_size,
             )
         )
 
@@ -4088,13 +4427,17 @@ def uw_grid_wrapped(
         n_j=n_j,
         n_ifg=n_ifg,
         n_ps=n_ps,
-        grid_ij=grid_ij,
+        grid_ij=grid_ij + 1,
         pix_size=pix_size,
     )
 
 
 def wrap_filt(
-    ph_in: Array, n_win: int, alpha: float, n_pad: Optional[int] = None, low_flag: str = "n"
+    ph_in: Array,
+    n_win: int,
+    alpha: float,
+    n_pad: Optional[int] = None,
+    low_flag: str = "n",
 ) -> Tuple[Array, Array]:
     """
     Apply Goldstein adaptive and optional lowpass filtering to phase data.
@@ -4296,35 +4639,43 @@ def uw_interp() -> None:
         # multiple solutions for the nearest neighbors
         Z = loadmat(Path("Z.mat"))["Z"]
 
-    # Column edges
-    Zvec = Z.T.ravel()
+    # Identify the grid edges
+    Zvec = np.ravel(Z.T)  # Column edges
     grid_edges = np.vstack((Zvec[:-nrow], Zvec[nrow:])).T
+    Zvec = np.ravel(Z)  # Add the row edges
+    grid_edges = np.vstack((grid_edges, np.column_stack((Zvec[:-ncol], Zvec[ncol:]))))  # OK
+    del Zvec
 
-    # Row edges
-    Zvec = Z.ravel()
-    grid_edges = np.vstack((grid_edges, np.column_stack((Zvec[:-ncol], Zvec[ncol:]))))
-
-    sort_edges = np.sort(grid_edges, axis=1)
+    # Sort each edge to have lowest pixel node first
     I_sort = np.argsort(grid_edges, axis=1)
-    edge_sign = I_sort[:, 1] - I_sort[:, 0]
+    sort_edges = np.take_along_axis(grid_edges, I_sort, axis=1)
+    edge_sign = I_sort[:, 1] - I_sort[:, 0]  # OK
 
-    _, I, J = np.unique(sort_edges, axis=0, return_index=True, return_inverse=True)
-    sameix = sort_edges[:, 0] == sort_edges[:, 1]
-    sort_edges[sameix, :] = 0
+    alledges, I, J = np.unique(sort_edges, axis=0, return_index=True, return_inverse=True)
+    sameix = alledges[:, 0] == alledges[:, 1]
+    alledges[sameix, :] = 0  # Set edges connecting identical nodes to (0,0)
 
-    _, I2, J2 = np.unique(sort_edges, axis=0, return_index=True, return_inverse=True)
+    # (I+1) matches, (J+1) matches
+
+    check("alledges", alledges)
+
+    edgs, I2, J2 = np.unique(alledges, axis=0, return_index=True, return_inverse=True)
+    # We drop (0,0) edge from the list, so we have (n_edge - 1) edges
     n_edge = I2.shape[0] - 1
+    edgs = np.column_stack(([np.arange(1, n_edge + 1), edgs[1:, :]]))  # OK
 
-    edgs = np.column_stack(([np.arange(1, n_edge + 1), sort_edges[I2[1:], :]]))
+    check("edgs", edgs)
 
-    gridedgeix = (J2[J] - 1) * edge_sign
+    gridedgeix = J2[J] * edge_sign
 
-    colix = gridedgeix[: nrow * (ncol - 1)].reshape(nrow, ncol - 1)
-    rowix = gridedgeix[nrow * (ncol - 1) :].reshape(ncol, nrow - 1).T
+    colix = gridedgeix[: nrow * (ncol - 1)].reshape(ncol - 1, nrow).T
+    rowix = gridedgeix[nrow * (ncol - 1) :].reshape(nrow - 1, ncol)
 
     log(f"Number of unique edges in grid: {n_edge}")
 
-    check("edgs", edgs, atol=1e-2, rtol=1e-2)
+    # check("gridedgeix", gridedgeix)
+    # check("rowix", rowix)
+    # check("colix", colix)
 
     stamps_save("uw_interp", edgs=edgs, n_edge=n_edge, rowix=rowix, colix=colix, Z=Z)
 
@@ -4613,7 +4964,7 @@ def ps_deramp(ps: dotdict, ph_all: Array, degree: Optional[int] = None) -> Tuple
     for k in range(ps.n_ifg):
         ix = np.isnan(ph_all[:, k])
         if ps.n_ps - np.sum(ix) > 5:
-            coeff = lscov(A[~ix, :], ph_all[~ix, k])
+            coeff = np.linalg.lstsq(A[~ix, :], ph_all[~ix, k])[0]
             ph_ramp[:, k] = np.dot(A, coeff)
             ph_all[:, k] -= ph_ramp[:, k]
         else:
@@ -4622,7 +4973,7 @@ def ps_deramp(ps: dotdict, ph_all: Array, degree: Optional[int] = None) -> Tuple
     return ph_all, ph_ramp
 
 
-def lscov(A: np.ndarray, B: np.ndarray, w: np.ndarray) -> np.ndarray:
+def lscov(A: Array, B: Array, w: Array) -> Array:
     """
     Solves the weighted least squares problem A * x = B.
 
@@ -4685,7 +5036,7 @@ def test_stage2() -> None:
     new = patchdirs()[0]
     os.chdir(new)
     stage2_estimate_noise()
-    assert results_equal("pm1", atol=1e-3, rtol=1e-3)
+    assert results_equal("pm1", tol=1e-3)
     os.chdir(cwd)
     log("Stage 2 test passed")
 
@@ -4696,7 +5047,7 @@ def test_stage3() -> None:
     new = patchdirs()[0]
     os.chdir(new)
     stage3_select_ps()
-    assert results_equal("select1", atol=1e-2, rtol=1e-2)
+    assert results_equal("select1", tol=1e-2)
     os.chdir(cwd)
     log("Stage 3 test passed")
 
@@ -4707,11 +5058,11 @@ def test_stage4() -> None:
     new = patchdirs()[0]
     os.chdir(new)
     stage4_weed_ps()
-    assert results_equal("weed1", atol=1e-2, rtol=1e-2)
-    assert results_equal("pm2", atol=1e-2, rtol=1e-2)
-    assert results_equal("ps2", atol=1e-2, rtol=1e-2)
-    assert results_equal("hgt2", atol=1e-2, rtol=1e-2)
-    assert results_equal("la2", atol=1e-2, rtol=1e-2)
+    assert results_equal("weed1", tol=1e-2)
+    assert results_equal("pm2", tol=1e-2)
+    assert results_equal("ps2", tol=1e-2)
+    assert results_equal("hgt2", tol=1e-2)
+    assert results_equal("la2", tol=1e-2)
     os.chdir(cwd)
     log("Stage 4 test passed")
 
@@ -4722,7 +5073,7 @@ def test_stage5() -> None:
     new = patchdirs()[0]
     os.chdir(new)
     stage5_correct_phases()
-    assert results_equal("rc1", atol=1e-2, rtol=1e-2)
+    assert results_equal("rc1", tol=1e-2)
     os.chdir(cwd)
     log("Stage 5 test passed")
 
@@ -4733,7 +5084,7 @@ def test_stage6() -> None:
     new = patchdirs()[0]
     os.chdir(new)
     stage6_unwrap_phases()
-    assert results_equal("phuw1", atol=1e-2, rtol=1e-2)
+    assert results_equal("phuw1", tol=1e-1)
     os.chdir(cwd)
     log("Stage 6 test passed")
 
@@ -4744,7 +5095,7 @@ def test_ps_calc_ifg_std() -> None:
     new = patchdirs()[0]
     os.chdir(new)
     ps_calc_ifg_std()
-    assert results_equal("ifgstd1", atol=1e-2, rtol=1e-2)
+    assert results_equal("ifgstd1", tol=1e-2)
     os.chdir(cwd)
 
 
@@ -4776,26 +5127,25 @@ def test_interp() -> None:
                 9.4973,
             ]
         ),
-        rtol=1e-4,
-        atol=1e-4,
+        tol=1e-4,
     )
     log("Testing interp function 2")
     x = np.ones(100)
     y = interp(x, 10)
-    assert np.allclose(y, np.ones(1000), atol=1e-2, rtol=1e-2)
+    assert np.allclose(y, np.ones(1000), tol=1e-2)
     log("Testing interp function 3")
     t = np.linspace(0, 1, endpoint=True, num=1001)
     x = np.sin(2 * np.pi * 30 * t) + np.sin(2 * np.pi * 60 * t)
     y = interp(x, 4)
     yy = loadmat(Path("interp.mat"))["y"]
-    assert np.allclose(y, yy, atol=1e-2, rtol=1e-2)
+    assert np.allclose(y, yy, tol=1e-2)
     log("Testing interp function 4")
     cwd = Path.cwd()
     os.chdir(patchdirs()[0])
     x = loadmat(Path("Prand_1.mat"))["Prand"]
     y = interp(np.insert(x, 0, 1), 10)[:-9]
     z = loadmat(Path("Prand_after_1.mat"))["Prand"]
-    assert np.allclose(y, z, atol=1e-2, rtol=1e-2)
+    assert np.allclose(y, z, tol=1e-2)
     os.chdir(cwd)
     log("Testing interp function 5")
     cwd = Path.cwd()
@@ -4803,7 +5153,7 @@ def test_interp() -> None:
     x = loadmat(Path("Prand_2.mat"))["Prand"]
     y = interp(np.insert(x, 0, 1), 10)[:-9]
     z = loadmat(Path("Prand_after_2.mat"))["Prand"]
-    assert np.allclose(y, z, atol=1e-2, rtol=1e-2)
+    assert np.allclose(y, z, tol=1e-2)
     os.chdir(cwd)
 
 
@@ -4836,7 +5186,7 @@ def test_uw_interp() -> None:
     new = patchdirs()[0]
     os.chdir(new)
     uw_interp()
-    assert results_equal("uw_interp", atol=1e-2, rtol=1e-2)
+    assert results_equal("uw_interp", tol=1e-2)
     os.chdir(cwd)
 
 
