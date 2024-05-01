@@ -56,9 +56,9 @@ np.set_printoptions(
 
 DEBUG = False
 VERBOSE = False
-PLOTS = True
 TRIANGLE = "/Users/daleroberts/Work/.envbin/bin/triangle"
 SNAPHU = "/Users/daleroberts/Work/.envbin/bin/snaphu"
+FANCY_PROGRESS = True
 
 
 class dotdict(dict):
@@ -133,21 +133,21 @@ def show_progress(step: int, total: int, title: Optional[str] = None) -> None:
             sys.stdout.write("\r" + disp)
         sys.stdout.flush()
 
-    perc = 100 * float(step+1) / float(total)
+    perc = 100 * float(step + 1) / float(total)
 
     try:
-        fancy(perc)
+        fancy(perc) if FANCY_PROGRESS else simple(perc)
     except OSError:  # Fallback to simple progress bar
         simple(perc)
 
 
-def tabulate(data: dict[str, list]) -> None:
+def tabulate(data: dict[str, list], precision:int=16) -> None:
     """Pretty prints a table from a dictionary."""
 
     # Convert the data to strings.
     data = {
         header: [
-            f"{value:.16f}" if isinstance(value, float) else str(value)
+            f"{value:.{precision}f}" if isinstance(value, float) else str(value)
             for value in values
         ]
         for header, values in data.items()
@@ -258,7 +258,6 @@ def results_equal(
         return int(ndiff > 0)
 
     def compare_value(p: Any, m: Any, key: str) -> int:
-        result = {"name": key}
         if isinstance(p, np.ndarray):
             if not allclose(p, m, tol=tol, equal_nan=equal_nan, modulo=modulo):
                 print(f"\nError: `{key}` does not match at {tol = }")
@@ -427,7 +426,7 @@ def stamps_load(fn: str, squeeze: bool = True) -> dotdict | Array:
     else:
         f = Path(f"{fn}.npz")
 
-    data = np.load(f, allow_pickle=True) # FIXME: allow_pickle=False
+    data = np.load(f, allow_pickle=True)  # FIXME: allow_pickle=False?
 
     assert hasattr(data, "files")
 
@@ -437,7 +436,7 @@ def stamps_load(fn: str, squeeze: bool = True) -> dotdict | Array:
             assert isinstance(arr, np.ndarray)
             return arr
         else:
-            dn = ''.join(x for x in fn if not x.isdigit())
+            dn = "".join(x for x in fn if not x.isdigit())
             return dotdict({dn: data[data.files[0]]})
 
     dic = {}
@@ -682,7 +681,7 @@ def getparm(parmname: Optional[str] = None, verbose: bool = True) -> str:
 
 def setparm(parmname: str, value: Any) -> None:
     """Sets a parameter value in the local parameters file."""
-    #FIXME: Save to new format
+    # FIXME: Save to new format
 
     import scipy.io as sio
 
@@ -1386,11 +1385,13 @@ def stage1_load_data(endian: str = "b") -> None:
         mean_range=mean_range,
     )
 
-    stamps_save(f"ph{psver}", ph)
-    stamps_save(f"bp{psver}", bperp_mat)
-    stamps_save(f"la{psver}", la)
-    stamps_save(f"da{psver}", D_A)
-    stamps_save(f"hgt{psver}", hgt)
+    stamps_save(f"ph{psver}", ph)  # phase data (n_ps, n_ifg)  - complex
+    stamps_save(
+        f"bp{psver}", bperp_mat
+    )  # perpendicular baselines (n_ps, n_ifg) - meters
+    stamps_save(f"la{psver}", la)  # incidence angles (n_ps,) - radians
+    stamps_save(f"da{psver}", D_A)  # dispersion (fano factor) (n_ps,) - unitless
+    stamps_save(f"hgt{psver}", hgt)  # height data (n_ps,) - meters
 
     log("Stage 1 complete.")
 
@@ -1432,6 +1433,7 @@ def stage2_estimate_noise(max_iters: int = 1000) -> None:
     # inc_mean = ps.mean_incidence + np.deg2rad(3)
 
     # CLAP filter parameters
+
     grid_size = int(getparm("filter_grid_size"))
     filter_weighting = getparm("filter_weighting")  # string
     n_win = int(getparm("clap_win"))
@@ -1447,6 +1449,7 @@ def stage2_estimate_noise(max_iters: int = 1000) -> None:
     log(f"{clap_beta = } (CLAP filter beta)")
 
     # Parameters for maximum baseline length (max_K) calculation
+
     max_topo_err = float(getparm("max_topo_err"))
     lambda_ = float(getparm("lambda"))
 
@@ -1754,20 +1757,21 @@ def stage2_estimate_noise(max_iters: int = 1000) -> None:
 
     stamps_save(
         "pm1",
-        ph_patch=ph_patch,
-        K_ps=K_ps,
-        C_ps=C_ps,
-        coh_ps=coh_ps,
-        N_opt=N_opt,
-        ph_res=ph_res,
-        ph_grid=ph_grid,
-        n_trial_wraps=n_trial_wraps,
-        grid_ij=grid_ij,
-        grid_size=grid_size,
-        low_pass=low_pass,
-        i_loop=iter,
-        coh_bins=coh_bins,
-        Nr=Nr,
+        ph_patch=ph_patch,  # phase data (n_ps, n_ifg) - complex
+        K_ps=K_ps,  # topographic phase model coefficients (n_ps,) - radians
+        C_ps=C_ps,  # static phase offset (n_ps,) - radians
+        coh_ps=coh_ps,  # coherence values (n_ps,) - unitless
+        N_opt=N_opt,  # number of interferograms used in fitting (n_ps,) - unitless
+        ph_res=ph_res,  # phase residuals (n_ps, n_ifg) - radians
+        ph_grid=ph_grid,  # raw phase data (n_i, n_j, n_ifg) - complex
+        n_trial_wraps=n_trial_wraps,  # number of trial wraps (scalar) - unitless
+        grid_ij=grid_ij,  # grid indices (n_ps, 2) - unitless
+        grid_size=grid_size,  # filter grid size (scalar) - unitless
+        low_pass=low_pass,  # low-pass filter (n_win, n_win) - unitless
+        i_loop=iter,  # iteration number (scalar) - unitless
+        coh_bins=coh_bins,  # coherence bins (n_bins,) - unitless
+        Nr=Nr,  # histogram of random coherences (n_bins,) - unitless
+        coh_thresh=low_coh_thresh,  # low coherence threshold (scalar) - unitless
         # step_number=step_number,
         # ph_weight=ph_weight,
         # Nr_max_nz_ix=Nr_max_nz_ix,
@@ -2005,32 +2009,6 @@ def stage3_select_ps(reest_flag: int = 0) -> None:
         f"Initial gamma threshold: {min(coh_thresh):.3f} at D_A={min(D_A):.2f}"
         f" to {max(coh_thresh):.3f} at D_A={max(D_A):.2f}"
     )
-
-    # if PLOTS and np.count_nonzero(np.isfinite(min_coh)) > 1:
-    #    plt.figure(3)
-    #    plt.plot(D_A_mean, min_coh, "*")
-    #    if len(coh_thresh_coeffs) > 0:
-    #        plt.plot(D_A_mean, np.polyval(coh_thresh_coeffs, D_A_mean), "r")
-    #    plt.ylabel(r"$\gamma_\text{thresh}$")
-    #    plt.xlabel("$D_A$")
-    #    breakpoint()
-    #    plt.show()
-
-    # if PLOTS:
-    #    plt.figure(4)
-    #    plt.hist(
-    #        pm.coh_ps,
-    #        bins=50,
-    #        color="magenta",
-    #        alpha=0.4,
-    #        edgecolor="magenta",
-    #    )
-    #    for ct in coh_thresh:
-    #        plt.axvline(x=ct, color="k", linestyle="--", label="coh_thresh")
-    #        # add label at x = ct
-    #        plt.text(ct, 1000, "coh_thresh", rotation=90)
-    #    plt.title("Distribution of coherence values for PS candidates")
-    #    plt.show()
 
     ix = np.where(pm["coh_ps"] > coh_thresh)[0]  # Select those above threshold
     n_ps = len(ix)
@@ -2283,57 +2261,25 @@ def stage3_select_ps(reest_flag: int = 0) -> None:
     log(f"{min_coh = }")
     log(f"{coh_thresh_coeffs = }")
 
-    # if PLOTS:
-    #    plt.figure(6)
-    #    plt.plot(D_A_mean, min_coh, "*")
-    #    if len(coh_thresh_coeffs) > 0:
-    #        plt.plot(D_A_mean, np.polyval(coh_thresh_coeffs, D_A_mean), "r")
-    #    plt.ylabel(r"$\gamma_{thresh}$")
-    #    plt.xlabel("D_A")
-    #    plt.show()
-
-    # if PLOTS:
-    #    plt.figure(7)
-    #    plt.hist(
-    #        pm.coh_ps,
-    #        bins=50,
-    #        color="magenta",
-    #        alpha=0.4,
-    #        edgecolor="magenta",
-    #        label="Before",
-    #    )
-    #    plt.hist(
-    #        coh_ps2,
-    #        bins=50,
-    #        color="cyan",
-    #        alpha=0.4,
-    #        edgecolor="darkcyan",
-    #        label="After",
-    #    )
-    #    for ct in coh_thresh:
-    #        plt.axvline(x=ct, color="k", linestyle="--", label="coh_thresh")
-    #        plt.text(ct + 0.01, 1000, f"coh_thresh = {ct:.2f}", rotation=90)
-    #    plt.title("Re-estimation of coherence distribution for PS candidates")
-    #    plt.legend()
-    #    plt.show()
-
     stamps_save(
         f"select{psver}",
         ix=ix,
         keep_ix=keep_ix,
-        ph_patch2=ph_patch2,
-        ph_res2=ph_res2,
-        K_ps2=K_ps2,
-        C_ps2=C_ps2,
-        coh_ps2=coh_ps2,
-        coh_thresh=coh_thresh,
-        coh_thresh_coeffs=coh_thresh_coeffs,
-        clap_alpha=clap_alpha,
-        clap_beta=clap_beta,
-        n_win=n_win,
-        max_percent_rand=round(max_percent_rand, 0),
-        gamma_stdev_reject=gamma_stdev_reject,
-        small_baseline_flag=small_baseline_flag,
+        ph_patch2=ph_patch2,  # phase data (n_ps, n_ifg) - complex
+        ph_res2=ph_res2,  # phase residuals (n_ps, n_ifg) - radians
+        K_ps2=K_ps2,  # topographic phase model coefficients (n_ps,) - radians
+        C_ps2=C_ps2,  # static phase offset (n_ps,) - radians
+        coh_ps2=coh_ps2,  # coherence values (n_ps,) - unitless
+        coh_thresh=coh_thresh,  # coherence threshold (n_ps,) - unitless
+        coh_thresh_coeffs=coh_thresh_coeffs,  # coherence threshold coefficients (2,) - unitless
+        clap_alpha=clap_alpha,  # CLAP alpha (scalar) - unitless
+        clap_beta=clap_beta,  # CLAP beta (scalar) - unitless
+        n_win=n_win,  # CLAP window size (scalar) - unitless
+        max_percent_rand=round(
+            max_percent_rand, 0
+        ),  # maximum percent random (scalar) - unitless
+        gamma_stdev_reject=gamma_stdev_reject,  # gamma standard deviation reject (scalar) - unitless
+        small_baseline_flag=small_baseline_flag,  # small baseline flag (string) - unitless
         ifg_index=ifg_index + 1,  # 1-based indexing to match MATLAB
     )
 
@@ -2832,16 +2778,16 @@ def stage4_weed_ps(
 
     stamps_save(
         f"pm{psver + 1}",
-        ph_patch=ph_patch,
-        ph_res=ph_res,
-        coh_ps=coh_ps,
-        K_ps=K_ps,
-        C_ps=C_ps,
+        ph_patch=ph_patch,  # phase data (n_ps, n_ifg) - complex
+        ph_res=ph_res,  # phase residuals (n_ps, n_ifg) - radians
+        coh_ps=coh_ps,  # coherence values (n_ps,) - unitless
+        K_ps=K_ps,  # topographic phase model coefficients (n_ps,) - radians
+        C_ps=C_ps,  # static phase offset (n_ps,) - radians
     )
 
     # Prepare phase data for saving
     ph2 = ph2[ix_weed, :]
-    stamps_save(f"ph{psver+1}", ph2)
+    stamps_save(f"ph{psver+1}", ph2)  # phase data (n_ps, n_ifg) - complex
 
     # Update PS information with weed results
     xy2 = xy2[ix_weed, :]
@@ -2850,7 +2796,7 @@ def stage4_weed_ps(
 
     ps.update({"xy": xy2, "ij": ij2, "lonlat": lonlat2, "n_ps": ph2.shape[0]})
     psname = f"ps{psver + 1}"
-    stamps_save(psname, ps)
+    stamps_save(psname, ps)  # phase data (n_ps, n_ifg) - complex
 
     # Process and save height data if available
     if stamps_exists(f"hgt{psver}"):
@@ -2865,7 +2811,7 @@ def stage4_weed_ps(
             la_other = la[ix_other]
             la = np.concatenate([la, la_other])
         la = la[ix_weed]
-        stamps_save(f"la{psver + 1}", la)
+        stamps_save(f"la{psver + 1}", la)  # look angle data (n_ps,) - radians
 
     # Process and save incidence angle data if available
     if stamps_exists(f"inc{psver}"):
@@ -2875,7 +2821,7 @@ def stage4_weed_ps(
             inc_other = inc[ix_other]
             inc = np.concatenate([inc, inc_other])
         inc = inc[ix_weed]
-        stamps_save(f"inc{psver + 1}", inc)
+        stamps_save(f"inc{psver + 1}", inc)  # incidence angle data (n_ps,) - radians
 
     # Process and save baseline data if available
     if stamps_exists(f"bp{psver}"):
@@ -2885,7 +2831,7 @@ def stage4_weed_ps(
             bperp_other = bperp[ix_other, :]
             bperp_mat = np.concatenate([bperp_mat, bperp_other])
         bperp_mat = bperp_mat[ix_weed, :]
-        stamps_save(f"bp{psver + 1}", bperp_mat)
+        stamps_save(f"bp{psver + 1}", bperp_mat)  # baseline data (n_ps, n_ifg) - meters
 
     log("Stage 4 complete.")
 
@@ -2961,7 +2907,11 @@ def stage5_correct_phases() -> None:
         )
 
         # Save the corrected phase and ph_reref
-        stamps_save(f"rc{psver}", ph_rc=ph_rc, ph_reref=ph_reref)
+        stamps_save(
+            f"rc{psver}",
+            ph_rc=ph_rc,  # phase data (n_ps, n_ifg) - complex
+            ph_reref=ph_reref,  # phase reference (n_ps, n_ifg) - complex
+        )
 
     log("Stage 5 complete.")
 
@@ -3341,7 +3291,11 @@ def stage6_unwrap_phases() -> None:
 
     ph_uw[:, np.setdiff1d(np.arange(ps.n_ifg), unwrap_ifg_index)] = 0
 
-    stamps_save(phuwname, ph_uw=ph_uw, msd=msd)
+    stamps_save(
+        phuwname,
+        ph_uw=ph_uw,  # unwrapped phase data (n_ps, n_ifg) - radians
+        msd=msd,  # mean squared differences (n_ifg,) - radians
+    )
 
 
 def sb_identify_good_pixels() -> None:
@@ -5787,19 +5741,21 @@ def run_tests() -> None:
     test_uw_interp()
     log("\nAll tests passed!\n")
 
+
 def run_all_stages() -> None:
     from contextlib import chdir
 
     for p in patchdirs():
         with chdir(p):
-            #stage1_load_data()
-            #stage2_estimate_noise()
-            #stage3_select_ps()
+            # stage1_load_data()
+            # stage2_estimate_noise()
+            # stage3_select_ps()
             stage4_weed_ps()
             stage5_correct_phases()
             stage6_unwrap_phases()
 
     log("\nAll stages completed!\n")
+
 
 def cli() -> None:
     import argparse
@@ -5818,6 +5774,7 @@ def cli() -> None:
 
     if args.run:
         run_all_stages()
+
 
 if __name__ == "__main__":
     cli()
