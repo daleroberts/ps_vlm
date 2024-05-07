@@ -30,7 +30,7 @@ libraries. The only required python libraries are `numpy` and `scipy`. The
 code will also need access to the `triangle` and `snaphu` executables, which
 are used for the Delaunay triangulation and phase unwrapping steps.
 
-At this stage the code is still under development and:
+Note: At this stage the code is still under development and:
   - written in a single file for ease of (planned) refactoring,
   - not yet fully optimized for speed,
   - only the default code execution path has been tested,
@@ -48,14 +48,14 @@ import os
 from scipy.signal import fftconvolve, convolve2d, lfilter, firls
 from scipy.signal.windows import gaussian
 from scipy.optimize import least_squares
-from scipy.fft import fftshift, ifftshift  # do we need these? replace by np.fft?
+from scipy.fft import fftshift, ifftshift  # FIXME: do we need these? replace by np.fft?
 from scipy.spatial import KDTree
 
 from datetime import datetime, timezone, timedelta
-from contextlib import chdir
+from contextlib import ExitStack, chdir
 from pathlib import Path
 
-from typing import Any, Tuple, Optional, List, no_type_check
+from typing import Any, Dict, Tuple, Optional, List, no_type_check
 from numpy.typing import NDArray as Array
 
 
@@ -66,6 +66,7 @@ VERBOSE = False
 TRIANGLE = "/Users/daleroberts/Work/.envbin/bin/triangle"
 SNAPHU = "/Users/daleroberts/Work/.envbin/bin/snaphu"
 FANCY_PROGRESS = True
+PROCESSOR = "gamma"
 
 
 class dotdict(dict):
@@ -89,6 +90,509 @@ class dotdict(dict):
 
     __delattr__ = dict.__delitem__  # type: ignore
     __dir__ = dict.keys  # type: ignore
+
+
+class PrepareData:
+    """Base class for the data preprocessing steps. This should be subclassed
+    for each specific data format (e.g. GAMMA, GSAR, SNAP, etc.). However, a
+    lot of the common functionality can be implemented here."""
+
+    def __init__(
+        self,
+        master_date: str,
+        datadir: Path,
+        da_thresh: float = 0.4,
+        rg_patches: int = 1,
+        az_patches: int = 1,
+        rg_overlap: int = 50,
+        az_overlap: int = 50,
+        maskfile: Optional[Path] = None,
+    ):
+        self.processor = PROCESSOR
+
+        self.master_date = master_date
+        self.datadir = datadir
+        self.da_thresh = da_thresh
+        self.rg_patches = rg_patches
+        self.az_patches = az_patches
+        self.rg_overlap = rg_overlap
+        self.az_overlap = az_overlap
+        self.maskfile = maskfile
+        self.width = 0
+        self.length = 0
+        self.precision = "f"
+        self.workdir = Path(".")  # cwd
+
+        log("# Stage 0: Preparing data")
+
+        log(f"master_date = {self.master_date}")
+        log(f"datadir = {self.datadir}")
+        log(f"da_thresh = {self.da_thresh}")
+        log(f"rg_patches = {self.rg_patches}")
+        log(f"az_patches = {self.az_patches}")
+        log(f"rg_overlap = {self.rg_overlap}")
+        log(f"az_overlap = {self.az_overlap}")
+        log(f"maskfile = {self.maskfile}")
+
+        # Find the SLC directory
+        self.slcdir = next(self.datadir.glob("*slc"), None)
+        assert self.slcdir is not None, f"SLC directory not found in {self.datadir}"
+
+        # Find the RSC file
+        self.rscfile = next((self.datadir / self.slcdir).glob(f"{self.master_date}.*slc.par"), None)
+        assert self.rscfile is not None, f"RSC file not found in {self.datadir / self.slcdir}"
+        self.rscfile = self.rscfile.resolve()  # get the full path
+
+        self.width, self.length, self.precision = self.parse_rsc_file(self.rscfile)
+
+        if self.precision == "FCOMPLEX":
+            prec = "f"
+        else:
+            prec = "s"
+
+        log(f"rscfile = {self.rscfile}")
+        log(f"width = {self.width}")
+        log(f"length = {self.length}")
+        log(f"precision = {self.precision} ({prec})")
+
+        self.generate_global_config_files()
+        self.generate_dem_config_file(self.workdir / "pscdem.in", self.workdir / "psclonlat.in")
+        self.generate_patch_config_files()
+
+        slcs = (self.datadir / self.slcdir).glob("*.*slc")
+        with open(self.workdir / "calamp.in", "w") as f:
+            for slc in slcs:
+                f.write(f"{slc}\n")
+
+        self.calibrate_amplitude(
+            self.workdir / "calamp.in",
+            self.width,
+            self.workdir / "calamp.out",
+            prec,
+            maskfile=self.maskfile,
+        )
+
+        self.generate_diff_config_files(
+            self.master_date, self.workdir / "calamp.out", self.workdir / "pscphase.in"
+        )
+
+    def parse_rsc_file(self, rscfile: Path) -> Tuple[int, int, str]:
+        """Parse the RSC file to get the width, length, and precision."""
+
+        for line in open(rscfile):
+            if "range_samples" in line:
+                width = int(line.split()[1])
+            elif "azimuth_lines" in line:
+                length = int(line.split()[1])
+            elif "image_format" in line:
+                precision = line.split()[1]
+
+        return width, length, precision
+
+    def write_param_to_file(self, x: Any, name: str | Path) -> None:
+        """Write a parameter to a file."""
+
+        if not Path(name).suffix:
+            name = Path(f"{name}.txt")
+
+        f = Path(name).resolve()
+
+        with f.open("a") as file:
+            file.write(f"{x}\n")
+
+    def generate_global_config_files(self) -> None:
+        """Write some global parameters to the appropriate files"""
+
+        self.write_param_to_file(self.processor, "processor")
+        self.write_param_to_file(self.width, "width")
+        self.write_param_to_file(self.length, "len")
+        self.write_param_to_file(str(self.rscfile), "rsc")
+
+    def generate_dem_config_file(self, demfn: Path, lonlatfn: Path) -> None:
+        """Write the DEM parameters to `pscdem.in` file"""
+
+        with open(demfn, "w") as f:
+            f.write(f"{self.width}\n")
+            for dem in self.datadir.glob("*dem.rdc"):
+                f.write(f"{dem}\n")
+
+        geopath = self.datadir / "geo"
+        lonfn = next(geopath.glob("*.lon"), None)
+        latfn = next(geopath.glob("*.lat"), None)
+
+        with open(lonlatfn, "a") as f:
+            f.write(f"{self.width}\n")
+
+            if lonfn is not None and latfn is not None:
+                f.write(f"{lonfn}\n")
+                f.write(f"{latfn}\n")
+
+    def generate_patch_config_files(self) -> None:
+        """Generate the patch configuration files."""
+
+        selfile = self.workdir / "selpsc.in"
+        self.write_param_to_file(self.da_thresh, selfile)
+        self.write_param_to_file(self.width, selfile)
+        self.write_param_to_file(f"{self.workdir}/calamp.out", selfile)
+
+        width_p = self.width // self.rg_patches
+        length_p = self.length // self.az_patches
+
+        log(f"{width_p = }")
+        log(f"{length_p = }")
+
+        # Remove any existing patch directories and patch list file
+
+        pds = self.workdir.glob("PATCH_*")
+        for p in pds:
+            p.unlink()
+        (self.workdir / "patch.list").unlink(missing_ok=True)
+
+        # Generate the patch directories and patch list file
+
+        for irg in range(self.rg_patches):
+            for iaz in range(self.az_patches):
+                start_rg1 = width_p * irg
+                start_rg = start_rg1 - self.rg_overlap
+                if start_rg < 1:
+                    start_rg = 1
+
+                end_rg1 = width_p * (irg + 1)
+                end_rg = end_rg1 + self.rg_overlap
+                if end_rg > self.width:
+                    end_rg = self.width
+
+                start_az1 = length_p * iaz
+                start_az = start_az1 - self.az_overlap
+                if start_az < 1:
+                    start_az = 1
+
+                end_az1 = length_p * (iaz + 1)
+                end_az = end_az1 + self.az_overlap
+                if end_az > self.length:
+                    end_az = self.length
+
+                patch_dir = self.workdir / f"PATCH_{irg * self.az_patches + iaz}"
+                patch_dir.mkdir(exist_ok=True)
+
+                with open(patch_dir / "patch.in", "w") as f:
+                    f.write(f"{start_rg}\n")
+                    f.write(f"{end_rg}\n")
+                    f.write(f"{start_az}\n")
+                    f.write(f"{end_az}\n")
+
+                with open(patch_dir / "patch_noover.in", "w") as f:
+                    f.write(f"{start_rg1}\n")
+                    f.write(f"{end_rg1}\n")
+                    f.write(f"{start_az1}\n")
+                    f.write(f"{end_az1}\n")
+
+                with open(self.workdir / "patch.list", "a") as f:
+                    f.write(f"{patch_dir}\n")
+
+    def calibrate_amplitude(
+        self,
+        infile: Path,
+        width: int,
+        outfile: Path,
+        prec: str,
+        byteswap: bool = False,
+        maskfile: Optional[Path] = None,
+    ) -> None:
+        """Calibrate the amplitude of the SLC data."""
+
+        if prec == "s":
+            typestr = ">h"
+        else:
+            typestr = ">c8"
+
+        # Identify the master observation
+
+        with open("rsc.txt") as fd:
+            masterfn = fd.readline().strip()
+
+        # read the heading parameter from the master observation
+
+        with open(masterfn) as fd:
+            for line in fd.readlines():
+                if line.startswith("heading"):
+                    master_heading = float(line.split()[1])
+                    break
+
+        # read the list of files to process from the input file
+
+        fns = []
+        with open(infile) as fd:
+            for line in fd.readlines():
+                fns.append(line.strip())
+
+        # open the parameter file associated with each file in 'fns'
+        # and then read the heading parameter. If the heading is
+        # different to the master heading, then remove the file from
+        # the list of files to process
+
+        log("Filtering observations based on heading")
+
+        fns2 = []
+        for fn in fns:
+            parfn = fn + ".par"
+            with open(parfn) as fd:
+                for line in fd.readlines():
+                    if line.startswith("heading"):
+                        heading = float(line.split()[1])
+                        break
+
+            # Additional filtering based on heading
+
+            if np.abs(heading - master_heading) > 0.01:
+                log(
+                    f"{fn} heading: {heading:9.6f} master_heading: {master_heading:9.6f} - skipping"
+                )
+            else:
+                log(f"{fn} heading: {heading:9.6f} master_heading: {master_heading:9.6f}")
+                fns2.append(fn)
+
+        log(f"Before: {len(fns)} obs After: {len(fns2)} obs")
+
+        fns = fns2
+
+        mean_amps = np.zeros(len(fns))
+        sd_amps = np.zeros(len(fns))
+
+        with open(outfile, "w") as fd:
+            for i, fn in enumerate(fns):
+                try:
+                    data = np.fromfile(fn, dtype=typestr)
+                    data.shape = (-1, width)
+
+                    amp = np.absolute(data)
+                    amp[amp <= 10e-6] = np.nan
+
+                    mean_amp = np.nanmean(amp)
+                    sd_amp = np.nanstd(amp)
+
+                    mean_amps[i] = mean_amp
+                    sd_amps[i] = sd_amp
+
+                    fd.write(f"{fn} {mean_amp}\n")
+
+                    log(f"{i:3d}: {fn} mean_amp: {mean_amp:.4f}")
+                except ValueError as e:
+                    log(f"Error processing {fn}: {e}")
+
+        mu = np.nanmean(mean_amps)
+        sd = np.nanstd(mean_amps)
+
+        for i, fn in enumerate(fns):
+            star = " " if np.abs(mean_amps[i] - mu) < 2 * sd else "*"
+            print(f"{i:3d}: {fn} mean_amp: {mean_amps[i]:+8.4f} sd_amp: {sd_amps[i]:+8.4f} {star}")
+
+    def generate_diff_config_files(
+        self, master_date: str, calampfn: Path, pscphasefn: Path
+    ) -> None:
+        """Generate the differential interferogram configuration file. Basically,
+        use the calibrated amplitude file to generate the differential interferograms
+        filenames and write them to a file."""
+
+        with open(calampfn) as fd, open(pscphasefn, "w") as fo:
+            for line in fd:
+                fn = Path(line.strip().split()[0])
+                stem = fn.stem
+                if master_date not in stem:
+                    difffn = fn.parent.parent / "diff0" / Path(f"{master_date}_{fn.stem}.diff")
+                    fo.write(f"{difffn}\n")
+
+
+    def extract_candidate_pixels(self, 
+                                 dophase:bool=True,
+                                 dolonlat:bool=True,
+                                 dodem:bool=True,
+                                 docands:bool=True,
+                                 precision:str="f",
+                                 byteswap:bool=False,
+                                 maskfile:Optional[Path]=None,
+                                 patchlist:Path=Path("patch.list")) -> None:
+
+        with open(patchlist) as f:
+            patchdirs = [Path(x.strip()).resolve() for x in f.readlines()]
+
+        for patchdir in patchdirs:
+            if docands:
+                self.select_candidate_pixels(self.workdir / "selpsc.in", 
+                                             patchdir / "patch.in",
+                                             patchdir / "pscands.1.ij",
+                                             patchdir / "pscands.1.da",
+                                             patchdir / "mean_amp.flt",
+                                             patchdir / "Dsq.flt",
+                                             patchdir / "pos.bin",
+                                             precision=precision,
+                                             byteswap=byteswap,
+                                             )
+
+    def select_candidate_pixels(self,
+                                selpscfn:Path,
+                                patchfn:Path,
+                                ijfn:Path,
+                                dafn:Path,
+                                meanampfn:Path,
+                                dsqfn:Path,
+                                posfn:Path,
+                                precision:str="f",
+                                byteswap:bool=False,
+                                ) -> None:
+
+        log("Selecting candidate pixels")
+
+        if precision == "s":
+            raise NotImplementedError
+        else:
+            ts = ">c8"
+        
+        log(f"dtype: {ts} ({np.dtype(ts).kind} {np.dtype(ts).itemsize * 8}-bit)")
+        
+        calib_factor = []
+        D_thresh = 0.0
+        width = 0
+        fns = []
+        
+        with open(selpscfn) as fd:
+            D_thresh = float(fd.readline())
+            width = int(fd.readline())
+            for line in fd:
+                c1, c2 = line.split()
+                fns.append(Path(c1))
+                calib_factor.append(float(c2))
+        
+        with open(patchfn) as fd:
+            rg_start = int(fd.readline())
+            rg_end = int(fd.readline())
+            az_start = int(fd.readline())
+            az_end = int(fd.readline())
+        
+        for fn, c in zip(fns, calib_factor):
+            azs, rgs = filedim(fn, width, ts)
+            log(f"{fn} mean_amp:{c:6.4f} azs:{azs} rgs:{rgs}")
+        
+        calib = np.array(calib_factor)
+        nlines, width = filedim(fns[0], width, ts)
+        nfiles = len(fns)
+        D_sq_thresh = D_thresh**2
+        rg_start = max(0, rg_start - 1)
+        rg_end = min(width, rg_end - 1)
+        az_start = max(0, az_start - 1)
+        az_end = min(nlines, az_end - 1)
+        pscid = 0
+        
+        log(f"nfiles = {nfiles}")
+        log(f"dispersion threshold = {D_thresh:.4f}")
+        log(f"dispersion-squared threshold = {D_sq_thresh:.4f}")
+        log(f"width = {width}")
+        log(f"nlines = {nlines}")
+        log(f"rg_start = {rg_start}")
+        log(f"rg_end = {rg_end}")
+        log(f"az_start = {az_start}")
+        log(f"az_end = {az_end}")
+        
+        nskip = 0
+        
+        inazrg: Dict[int, List[int]] = {}
+
+        inazrgfn = Path(selpscfn).resolve().parent / "input_azrg"
+        if inazrgfn.exists():
+            log(f"Found {inazrgfn}. Also adding points from that file.")
+            with open(inazrgfn) as fd:
+                for line in fd.readlines():
+                    az, rg = [int(x)-1 for x in line.strip().split()]
+                    inazrg.setdefault(az, []).append(rg)
+        
+        with ExitStack() as stack:
+            pfd = stack.enter_context(open(posfn, "w"))
+            mfd = stack.enter_context(open(meanampfn, "w"))
+            Dsqfd = stack.enter_context(open(dsqfn, "w"))
+            ijfd = stack.enter_context(open(ijfn, "w"))
+            dafd = stack.enter_context(open(dafn, "w"))
+            slcfds = [stack.enter_context(open(f)) for f in fns]
+        
+            for az in range(nlines):
+                arr = np.array(
+                    [np.fromfile(fd, dtype=ts, count=width) for fd in slcfds], dtype=ts
+                )
+        
+                if not (az_start <= az <= az_end):
+                    nskip += 1
+                    continue
+        
+                # arr = arr[:, rg_start:rg_end]
+        
+                amp = np.absolute(arr)
+        
+                for i in range(len(calib)):
+                    amp[i, :] /= calib[i]
+        
+                mask = amp < 0.00005
+                amp[mask] = np.nan
+                mask = np.count_nonzero(mask, axis=0) > 1
+        
+                sumamp = np.nansum(amp, axis=0)
+                sumampsq = np.nansum(amp**2, axis=0)
+                D_sq = nfiles * sumampsq / (sumamp * sumamp) - 1  # var / mean^2
+        
+                D_sq[mask] = np.nan
+        
+                rgloc = list(np.argwhere(D_sq < D_sq_thresh).flatten())
+        
+                if az in inazrg:
+                    frgs = inazrg[az]
+                    log(f"at azimuth: {az}, adding fixed ranges: {frgs}")
+                    rgloc.extend(frgs)
+        
+                pos = np.zeros_like(D_sq, dtype=np.ubyte)
+                pos[rgloc] = 1
+        
+                if az % 100 == 0:
+                    log(f"line {az} / {nlines}  {np.nanmedian(D_sq):.4f} {len(rgloc)}")
+        
+                for rg in rgloc:
+                    if rg_start <= rg <= rg_end:
+                        ijfd.write(f"{pscid} {az + 1} {rg + 1}\n")
+                        dafd.write(f"{np.sqrt(D_sq[rg]):.4f}\n")
+                        pscid += 1
+        
+                sumamp[mask] = 0
+                D_sq[mask] = 0
+        
+                meanamp = sumamp / nfiles
+        
+                meanamp.astype(">f4").tofile(mfd)  # 32-bit float big-endian
+                D_sq.astype(">f4").tofile(Dsqfd)
+                pos.astype(">B").tofile(pfd)
+        
+        log(f"{nskip} lines skipped")
+        log(f"{pscid} PS candidates generated"
+            f" ({pscid / ((az_end - az_start)*(rg_end-rg_start)) * 100:.2f}% of patch pixels)")
+
+    def run(self) -> None:
+        raise NotImplementedError("Subclass must implement this method")
+
+
+class GammaPrepareData(PrepareData):
+    def run(self) -> None:
+        pass
+
+
+class DorisPrepareData(PrepareData):
+    def run(self) -> None:
+        pass
+
+
+class SnapPrepareData(PrepareData):
+    def run(self) -> None:
+        pass
+
+
+class GsarPrepareData(PrepareData):
+    def run(self) -> None:
+        pass
 
 
 def log(msg: str) -> None:
@@ -208,6 +712,13 @@ def run_snaphu_on(fn: Path, ncol: int) -> None:
     else:
         with open("snaphu.log", "w") as out:
             subprocess.call(cmd, stdout=out, stderr=out)
+
+
+def filedim(fn, width, ts) -> Tuple[int, int]:
+    """Determine the dimensions of data in a file."""
+    size = fn.stat().st_size
+    nlines = size // (width * np.dtype(ts).itemsize)
+    return (nlines, width)
 
 
 def chop(x: Array, eps: Optional[float] = None) -> Array:
@@ -4301,7 +4812,7 @@ def uw_sb_unwrap_space_time(
         )
 
 
-def uw_sb_smooth_unwrap(bounds, options, G, W, dph, x1): # type: ignore
+def uw_sb_smooth_unwrap(bounds, options, G, W, dph, x1):  # type: ignore
     raise NotImplementedError
 
 
