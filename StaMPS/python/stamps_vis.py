@@ -1,117 +1,25 @@
 #!/usr/bin/env python3
 """
-Visualise the results of the STAMPS algorithm.
+Visualise the results of the STaMPS methodology. Many of these
+visualisations are not found in the original STaMPS MATLAB code.
+
+This code is seperate from the main program to avoid dependencies
+on matplotlib in the main program. This also allows us to
+quickly generate and tweak figures without waiting for the main
+program to run.
+
+The approach is that data can be saved in the main program using
+`stamps_save` and then loaded here using `stamps_load`.
+
+This code has been written by Dale Roberts.
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
 
+from stamps import dotdict, patchdirs, datestr, stamps_load
 from contextlib import chdir
-from pathlib import Path
-from typing import no_type_check, List, Tuple
-from numpy.typing import NDArray as Array
-from datetime import datetime, timedelta
-
-
-class dotdict(dict):
-    """A dictionary that allows access to its keys as attributes."""
-
-    @no_type_check
-    def __getattr__(self, x):
-        return dict.get(self, x)
-
-    @no_type_check
-    def __setattr__(self, x):
-        return dict.__setitem__(self, x)
-
-    @no_type_check
-    def __getstate__(self) -> dict:
-        return self.__dict__
-
-    @no_type_check
-    def __setstate__(self, d: dict) -> None:
-        self.__dict__.update(d)
-
-    __delattr__ = dict.__delitem__  # type: ignore
-    __dir__ = dict.keys  # type: ignore
-
-
-def patchdirs() -> List[Path]:
-    """Get the patch directories."""
-
-    dirs = []
-
-    patchlist = Path("patch.list")
-    if patchlist.exists():
-        # read directory names from `patch.list`
-        with patchlist.open("r") as f:
-            dirs = [Path(line.strip()) for line in f.readlines()]
-    else:
-        # if patch.list does not exist, find all directories with PATCH_ in the name
-        dirs = [d for d in Path(".").iterdir() if d.is_dir() and "PATCH_" in d.name]
-
-    if len(dirs) == 0:
-        # patch directories not found, use current directory
-        dirs.append(Path("."))
-
-    return dirs
-
-
-def stamps_load(fn: str, squeeze: bool = True) -> dotdict | Array:
-    """Load a data file with the given name."""
-
-    assert not fn.endswith(".mat")
-    assert not fn.endswith(".pkl")
-
-    if fn.endswith(".npz"):
-        f = Path(fn)
-    else:
-        f = Path(f"{fn}.npz")
-
-    data = np.load(f, allow_pickle=True)  # FIXME: allow_pickle=False
-
-    assert hasattr(data, "files")
-
-    if len(data.files) == 1:
-        if squeeze:
-            arr = data[data.files[0]]
-            assert isinstance(arr, np.ndarray)
-            return arr
-        else:
-            dn = "".join(x for x in fn if not x.isdigit())
-            return dotdict({dn: data[data.files[0]]})
-
-    dic = {}
-    for k in data.files:
-        if hasattr(data[k], "shape") and data[k].shape == ():
-            dic[k] = data[k].item()
-        else:
-            dic[k] = data[k]
-    return dotdict(dic)
-
-
-def datestr(
-    datenums: int | float | list | np.ndarray,
-) -> np.ndarray | np.datetime64:
-    """Converts MATLAB datenum format to a np.datetime64 in the form YYYY-MM-DD."""
-
-    if isinstance(datenums, (int, float)):
-        datenums = [datenums]
-
-    dns = np.array(datenums)
-
-    def datenum_to_str(d: float) -> str:
-        matlab_epoch = datetime(year=1, month=1, day=1)
-        days_since_matlab_epoch = d - 367
-        date = matlab_epoch + timedelta(days=days_since_matlab_epoch)
-        return date.strftime("%Y-%m-%d")
-
-    ds = np.array([datenum_to_str(d) for d in dns], dtype=np.datetime64)
-
-    if len(ds) == 1:
-        return np.datetime64(ds[0])
-
-    return ds
+from typing import Tuple
 
 
 def lonlat_to_xy(lon: float, lat: float, zoom: int = 10) -> Tuple[int, int]:
@@ -119,9 +27,7 @@ def lonlat_to_xy(lon: float, lat: float, zoom: int = 10) -> Tuple[int, int]:
     n = 2**zoom
     x_tile = int(n * ((lon + 180) / 360))
     y_tile = int(
-        n
-        * (1 - (np.log(np.tan(np.radians(lat)) + 1 / np.cos(np.radians(lat))) / np.pi))
-        / 2
+        n * (1 - (np.log(np.tan(np.radians(lat)) + 1 / np.cos(np.radians(lat))) / np.pi)) / 2
     )
     return x_tile, y_tile
 
@@ -315,9 +221,7 @@ def fig_ps_phase_vs_prev_phase(patch: str) -> None:
 
     fig, ax = plt.subplots(figsize=(10, 3))
 
-    dates = [
-        f"{datestr(d1)} - {datestr(d2)}" for d1, d2 in zip(ps.day[:-1], ps.day[1:])
-    ]
+    dates = [f"{datestr(d1)} - {datestr(d2)}" for d1, d2 in zip(ps.day[:-1], ps.day[1:])]
     diff = np.diff(ph, axis=1)
 
     parts = ax.violinplot(
@@ -380,12 +284,8 @@ def fig_ps_phase_vs_master(patch: str) -> None:
             ax[i, j].set_title(f"{dates[k]} vs. master", fontsize=6)
             ax[i, j].set_xticks([])
             ax[i, j].set_yticks([])
-            ax[i, j].axvline(
-                x=center_real, color="gray", linestyle="--", linewidth=0.5, alpha=0.5
-            )
-            ax[i, j].axhline(
-                y=center_imag, color="gray", linestyle="--", linewidth=0.5, alpha=0.5
-            )
+            ax[i, j].axvline(x=center_real, color="gray", linestyle="--", linewidth=0.5, alpha=0.5)
+            ax[i, j].axhline(y=center_imag, color="gray", linestyle="--", linewidth=0.5, alpha=0.5)
             ax[i, j].set_xlim(center_real - sdt_real, center_real + sdt_real)
             ax[i, j].set_ylim(center_imag - sdt_imag, center_imag + sdt_imag)
 
@@ -620,6 +520,54 @@ def fig_unwrap_mesh(patch: str) -> None:
     show(f"unwrap_mesh_{patch}")
 
 
+def fig_wrap_vs_unwrap(patch: str) -> None:
+    ps = stamps_load("ps1")
+    assert isinstance(ps, dotdict)
+
+    ph = stamps_load("ph1")
+    assert isinstance(ph, np.ndarray)
+
+    phuw = stamps_load("phuw1")
+    assert isinstance(phuw, dotdict)
+
+    ph_uw = phuw.ph_uw
+
+    pl, pu = np.nanpercentile(ph_uw, [10, 90])
+    pl = min(pl, -pu)
+    pu = max(pu, -pl)
+    print(f"Percentiles: {pl}, {pu}")
+
+    ph_uw[np.isnan(ph_uw)] = 0
+
+    lon = ps.lonlat[:, 0]
+    lat = ps.lonlat[:, 1]
+
+    fig, ax = plt.subplots(figsize=(13, 5 + 1), nrows=1, ncols=2)
+
+    # set axes background to light gray
+    ax[0].set_facecolor("lightgray")
+    ax[1].set_facecolor("lightgray")
+
+    ax[0].scatter(lon, lat, c=np.angle(ph[:, 1]), cmap="jet_r", marker=".", s=0.5)
+    ax[1].scatter(lon, lat, c=ph_uw[:, 1], cmap="jet_r", marker=".", s=0.5, vmin=pl, vmax=pu)
+
+    # add colorbars
+
+    cbar = plt.colorbar(ax[0].collections[0], ax=ax[0], orientation="vertical")
+    cbar.set_label("Wrapped phase (radians)")
+    cbar.set_ticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi])
+    cbar.set_ticklabels([r"$-\pi$", r"$-\pi/2$", r"0", r"$\pi/2$", r"$\pi$"])
+
+    cbar = plt.colorbar(ax[1].collections[0], ax=ax[1], orientation="vertical")
+    cbar.set_label("Unwrapped phase (radians)")
+
+    plt.suptitle(f"Wrapped vs. unwrapped phase ({patch})")
+
+    plt.tight_layout()
+
+    show("wrap_vs_unwrap")
+
+
 def show(figname: str) -> None:
     plt.savefig(f"{figname}")
     plt.show()
@@ -632,7 +580,6 @@ def set_fig_params() -> None:
 
 
 def generate_figures() -> None:
-
     set_fig_params()
 
     for p in patchdirs():
@@ -648,7 +595,8 @@ def generate_figures() -> None:
             # fig_initial_ps_mesh(str(p))
             # fig_initial_dispersion_mesh(str(p))
             # fig_stage2(str(p))
-            fig_unwrap_mesh(str(p))
+            # fig_unwrap_mesh(str(p))
+            fig_wrap_vs_unwrap(str(p))
 
 
 if __name__ == "__main__":
