@@ -16,7 +16,8 @@ on the original MATLAB code by Andrew Hooper et al.
 
 The methodology consists of the following stages:
 
-  - Stage 1: Load data from preprocessed GAMMA outputs
+  - Stage 0: Preprocessing and finding candidate PS pixels
+  - Stage 1: Load data from preprocessed outputs
   - Stage 2: Estimate the initial coherence
   - Stage 3: Select stable pixels from candidate pixels
   - Stage 4: Weeding out unstable pixels chosen in stage 3
@@ -24,6 +25,11 @@ The methodology consists of the following stages:
   - Stage 6: Unwrapping the phase
   - Stage 7: Spatial filtering of the unwrapped phase
   ...
+
+Note that Stage 0 in the original code is a combination of Bash and C++ codes
+and triggered by the `mt_prep_????` command. This stage has now been replaced
+by Python code and called "Stage 0". Therefore, you will not find any
+reference to this stage in the original documentation of StaMPS.
 
 The code has been written to have only minimal dependencies on external
 libraries. The only required python libraries are `numpy` and `scipy`. The
@@ -93,9 +99,20 @@ class dotdict(dict):
 
 
 class PrepareData:
-    """Base class for the data preprocessing steps. This should be subclassed
-    for each specific data format (e.g. GAMMA, GSAR, SNAP, etc.). However, a
-    lot of the common functionality can be implemented here."""
+    """Base class for the data preprocessing steps.
+
+    This should be subclassed for each specific data format (e.g. GAMMA, GSAR,
+    SNAP, etc.). However, a lot of the common functionality can be implemented
+    in this class.
+
+    This replaces all the bash and C++ code in the original StaMPS code with
+    Python code. The main goal is to make the code more readable and easier to
+    maintain.
+
+    Depending on the value of PROCESSOR (e.g. "gamma", "doris", "snap", "gsar"),
+    the appropriate data processing class will be instantiated when "Stage 0" is
+    run.
+    """
 
     def __init__(
         self,
@@ -299,7 +316,8 @@ class PrepareData:
         byteswap: bool = False,
         maskfile: Optional[Path] = None,
     ) -> None:
-        """Calibrate the amplitude of the SLC data."""
+        """Calibrate the amplitude of the SLC data. This is equivalent to the
+        `calamp` program."""
 
         if prec == "s":
             typestr = ">h"
@@ -346,7 +364,8 @@ class PrepareData:
 
             if np.abs(heading - master_heading) > 0.01:
                 log(
-                    f"{fn} heading: {heading:9.6f} master_heading: {master_heading:9.6f} - skipping"
+                    f"{fn} heading: {heading:9.6f}"
+                    f"master_heading: {master_heading:9.6f} - skipping"
                 )
             else:
                 log(f"{fn} heading: {heading:9.6f} master_heading: {master_heading:9.6f}")
@@ -402,44 +421,73 @@ class PrepareData:
                     difffn = fn.parent.parent / "diff0" / Path(f"{master_date}_{fn.stem}.diff")
                     fo.write(f"{difffn}\n")
 
-
-    def extract_candidate_pixels(self, 
-                                 dophase:bool=True,
-                                 dolonlat:bool=True,
-                                 dodem:bool=True,
-                                 docands:bool=True,
-                                 precision:str="f",
-                                 byteswap:bool=False,
-                                 maskfile:Optional[Path]=None,
-                                 patchlist:Path=Path("patch.list")) -> None:
+    def identify_candidates(
+        self,
+        do_identify: bool = True,
+        do_lonlats: bool = True,
+        do_heights: bool = True,
+        do_phases: bool = True,
+        precision: str = "f",
+        byteswap: bool = False,
+        maskfile: Optional[Path] = None,
+        patchlist: Path = Path("patch.list"),
+    ) -> None:
+        """Extract candidate locations for scatterers from the Single-Look
+        Complex (SLC) data. This is roughly equivalent to the
+        `mt_extract_cands` program."""
 
         with open(patchlist) as f:
             patchdirs = [Path(x.strip()).resolve() for x in f.readlines()]
 
         for patchdir in patchdirs:
-            if docands:
-                self.select_candidate_pixels(self.workdir / "selpsc.in", 
-                                             patchdir / "patch.in",
-                                             patchdir / "pscands.1.ij",
-                                             patchdir / "pscands.1.da",
-                                             patchdir / "mean_amp.flt",
-                                             patchdir / "Dsq.flt",
-                                             patchdir / "pos.bin",
-                                             precision=precision,
-                                             byteswap=byteswap,
-                                             )
+            if do_identify:
+                self.select_candidate_pixels(
+                    self.workdir / "selpsc.in",
+                    patchdir / "patch.in",
+                    patchdir / "pscands.1.ij",
+                    patchdir / "pscands.1.da",
+                    patchdir / "mean_amp.flt",
+                    patchdir / "Dsq.flt",
+                    patchdir / "pos.bin",
+                    precision=precision,
+                    byteswap=byteswap,
+                )
 
-    def select_candidate_pixels(self,
-                                selpscfn:Path,
-                                patchfn:Path,
-                                ijfn:Path,
-                                dafn:Path,
-                                meanampfn:Path,
-                                dsqfn:Path,
-                                posfn:Path,
-                                precision:str="f",
-                                byteswap:bool=False,
-                                ) -> None:
+            if do_lonlats:
+                self.extract_lonlats(
+                    self.workdir / "psclonlat.in",
+                    patchdir / "pscands.1.ij",
+                    patchdir / "pscands.1.ll",
+                )
+
+            if do_heights:
+                self.extract_heights(
+                    self.workdir / "pscdem.in",
+                    patchdir / "pscands.1.ij",
+                    patchdir / "pscands.1.hgt",
+                )
+
+            if do_phases:
+                self.extract_phases(
+                    self.workdir / "pscphase.in",
+                    patchdir / "pscands.1.ij",
+                    patchdir / "pscands.1.ph",
+                )
+
+    def select_candidate_pixels(
+        self,
+        selpscfn: Path,
+        patchfn: Path,
+        ijfn: Path,
+        dafn: Path,
+        meanampfn: Path,
+        dsqfn: Path,
+        posfn: Path,
+        precision: str = "f",
+        byteswap: bool = False,
+    ) -> None:
+        """Select candidate pixels from the SLC data. This is equivalent to the
+        `selpsc_patch` program."""
 
         log("Selecting candidate pixels")
 
@@ -447,14 +495,14 @@ class PrepareData:
             raise NotImplementedError
         else:
             ts = ">c8"
-        
+
         log(f"dtype: {ts} ({np.dtype(ts).kind} {np.dtype(ts).itemsize * 8}-bit)")
-        
+
         calib_factor = []
         D_thresh = 0.0
         width = 0
         fns = []
-        
+
         with open(selpscfn) as fd:
             D_thresh = float(fd.readline())
             width = int(fd.readline())
@@ -462,17 +510,17 @@ class PrepareData:
                 c1, c2 = line.split()
                 fns.append(Path(c1))
                 calib_factor.append(float(c2))
-        
+
         with open(patchfn) as fd:
             rg_start = int(fd.readline())
             rg_end = int(fd.readline())
             az_start = int(fd.readline())
             az_end = int(fd.readline())
-        
+
         for fn, c in zip(fns, calib_factor):
             azs, rgs = filedim(fn, width, ts)
             log(f"{fn} mean_amp:{c:6.4f} azs:{azs} rgs:{rgs}")
-        
+
         calib = np.array(calib_factor)
         nlines, width = filedim(fns[0], width, ts)
         nfiles = len(fns)
@@ -482,7 +530,7 @@ class PrepareData:
         az_start = max(0, az_start - 1)
         az_end = min(nlines, az_end - 1)
         pscid = 0
-        
+
         log(f"nfiles = {nfiles}")
         log(f"dispersion threshold = {D_thresh:.4f}")
         log(f"dispersion-squared threshold = {D_sq_thresh:.4f}")
@@ -492,9 +540,9 @@ class PrepareData:
         log(f"rg_end = {rg_end}")
         log(f"az_start = {az_start}")
         log(f"az_end = {az_end}")
-        
+
         nskip = 0
-        
+
         inazrg: Dict[int, List[int]] = {}
 
         inazrgfn = Path(selpscfn).resolve().parent / "input_azrg"
@@ -502,9 +550,9 @@ class PrepareData:
             log(f"Found {inazrgfn}. Also adding points from that file.")
             with open(inazrgfn) as fd:
                 for line in fd.readlines():
-                    az, rg = [int(x)-1 for x in line.strip().split()]
+                    az, rg = [int(x) - 1 for x in line.strip().split()]
                     inazrg.setdefault(az, []).append(rg)
-        
+
         with ExitStack() as stack:
             pfd = stack.enter_context(open(posfn, "w"))
             mfd = stack.enter_context(open(meanampfn, "w"))
@@ -512,70 +560,168 @@ class PrepareData:
             ijfd = stack.enter_context(open(ijfn, "w"))
             dafd = stack.enter_context(open(dafn, "w"))
             slcfds = [stack.enter_context(open(f)) for f in fns]
-        
+
             for az in range(nlines):
-                arr = np.array(
-                    [np.fromfile(fd, dtype=ts, count=width) for fd in slcfds], dtype=ts
-                )
-        
+                arr = np.array([np.fromfile(fd, dtype=ts, count=width) for fd in slcfds], dtype=ts)
+
                 if not (az_start <= az <= az_end):
                     nskip += 1
                     continue
-        
+
                 # arr = arr[:, rg_start:rg_end]
-        
+
                 amp = np.absolute(arr)
-        
+
                 for i in range(len(calib)):
                     amp[i, :] /= calib[i]
-        
+
                 mask = amp < 0.00005
                 amp[mask] = np.nan
                 mask = np.count_nonzero(mask, axis=0) > 1
-        
+
                 sumamp = np.nansum(amp, axis=0)
                 sumampsq = np.nansum(amp**2, axis=0)
                 D_sq = nfiles * sumampsq / (sumamp * sumamp) - 1  # var / mean^2
-        
+
                 D_sq[mask] = np.nan
-        
+
                 rgloc = list(np.argwhere(D_sq < D_sq_thresh).flatten())
-        
+
                 if az in inazrg:
                     frgs = inazrg[az]
                     log(f"at azimuth: {az}, adding fixed ranges: {frgs}")
                     rgloc.extend(frgs)
-        
+
                 pos = np.zeros_like(D_sq, dtype=np.ubyte)
                 pos[rgloc] = 1
-        
+
                 if az % 100 == 0:
                     log(f"line {az} / {nlines}  {np.nanmedian(D_sq):.4f} {len(rgloc)}")
-        
+
                 for rg in rgloc:
                     if rg_start <= rg <= rg_end:
                         ijfd.write(f"{pscid} {az + 1} {rg + 1}\n")
                         dafd.write(f"{np.sqrt(D_sq[rg]):.4f}\n")
                         pscid += 1
-        
+
                 sumamp[mask] = 0
                 D_sq[mask] = 0
-        
+
                 meanamp = sumamp / nfiles
-        
+
                 meanamp.astype(">f4").tofile(mfd)  # 32-bit float big-endian
                 D_sq.astype(">f4").tofile(Dsqfd)
                 pos.astype(">B").tofile(pfd)
-        
+
         log(f"{nskip} lines skipped")
-        log(f"{pscid} PS candidates generated"
-            f" ({pscid / ((az_end - az_start)*(rg_end-rg_start)) * 100:.2f}% of patch pixels)")
+
+        perc = pscid / ((az_end - az_start) * (rg_end - rg_start)) * 100
+        log(f"{pscid} PS candidates generated ({perc:.2f}% of patch pixels)")
+
+    def extract_lonlats(self, lonlatfn: Path, ijfn: Path, llfn: Path) -> None:
+        """Extract the longitude and latitude of the candidate pixels. This is roughly
+        equivalent to the `psclonlat` program."""
+
+        with open(lonlatfn, "r") as f:
+            width = int(f.readline().strip())
+            lonfn = f.readline().strip()
+            latfn = f.readline().strip()
+
+        lon = np.fromfile(lonfn, dtype=np.float32).reshape((-1, width))
+        lat = np.fromfile(latfn, dtype=np.float32).reshape((-1, width))
+        psc_ids = np.loadtxt(ijfn, delimiter=" ", usecols=(0, 1, 2), dtype=int)
+
+        lon_out = lon[psc_ids[:, 1], psc_ids[:, 2]]
+        lat_out = lat[psc_ids[:, 1], psc_ids[:, 2]]
+
+        np.savetxt(llfn, np.c_[lon_out, lat_out], fmt="%f")
+
+        log(f"{len(lon_out)} lon/lat pairs written to {llfn}")
+
+    def extract_heights(self, demfn: Path, ijfn: Path, hgtfn: Path) -> None:
+        """Extract the heights of the candidate pixels. This is roughly equivalent
+        to the `pscdem` program."""
+
+        with open(demfn) as fd:
+            width = int(fd.readline().strip())
+            sarhgtfn = Path(fd.readline().strip())
+
+        log(f"{width = }")
+        log(f"{sarhgtfn = }")
+
+        with open(sarhgtfn) as sarhgtfd, open(ijfn) as ijfd, open(hgtfn, "w") as hgtfd:
+            hgt = np.fromfile(sarhgtfd, dtype=">f4")
+            log(f"{hgt.shape = }")
+
+            for line in ijfd:
+                n, az, rg = [int(x) for x in line.strip().split()]
+
+                h = hgt[(az - 1) * width + (rg - 1)]
+                hgtfd.write(f"{az:>8} {rg:>8} {h:>14.4f}\n")
+
+    def extract_phases(self, paramfn: Path, ijfn: Path, phfn: Path) -> None:
+        """Extract the phase of the candidate pixels. This is roughly equivalent
+        to the `pscphase` program."""
+
+        typestr = ">c8"
+
+        with open(paramfn) as fd:
+            width = int(fd.readline().strip())
+            ifgfns = [Path(line.strip()) for line in fd.readlines()]
+
+        nfiles = len(ifgfns)
+
+        log(f"width (aka. range_samples) = {width}")
+        log(f"number of interferograms   = {nfiles}")
+
+        for i, fn in enumerate(ifgfns):
+            azs, rgs = filedim(Path(fn), width, typestr)
+            log(f"{i:3d}: {fn} azs:{azs} rgs:{rgs}")
+
+        mean_abs_phs = np.zeros(nfiles, dtype="float32")
+
+        with open(ijfn) as ijfd:
+            ij_lines = ijfd.readlines()
+            nijs = len(ij_lines)
+
+        with open(phfn, "w") as phfd:
+            ifgmm = [np.memmap(f, dtype=typestr, shape=(azs, rgs)) for f in ifgfns]
+
+            for i, (fn, ifg) in enumerate(zip(ifgfns, ifgmm)):
+                phs = np.empty(nijs, dtype=typestr)
+                print(f"{i:3d}: {fn}", end="")
+                for k, line in enumerate(ij_lines):
+                    n, az, rg = [int(x) - 1 for x in line.strip().split()]
+                    ph = np.array(ifg[az, rg], dtype=typestr)
+                    if np.isnan(np.absolute(ph)):
+                        log(f"NaN at {az} {rg}")
+                    ph.tofile(phfd)
+                    phs[k] = ph[0]
+                phs = np.array(phs, dtype=typestr)
+                mean_ph = np.mean(phs)
+                mean_abs_ph = np.mean(np.absolute(phs))
+                mean_abs_phs[i] = mean_abs_ph
+                log(f"\tmean_phase: {mean_ph:+8.4f}\tmean_abs_phase: {mean_abs_ph:+8.4f}")
+
+        mu = np.mean(mean_abs_phs)
+        sigma = np.std(mean_abs_phs)
+
+        log(f"mean_abs_phs: {mu:+8.4f} +/- {sigma:+8.4f}")
+
+        for i, fn in enumerate(ifgfns):
+            star = " " if np.abs(mean_abs_phs[i] - mu) < 2 * sigma else "*"
+            log(f"{i:3d}: {fn} {mean_abs_phs[i]:+8.4f} {star}")
 
     def run(self) -> None:
         raise NotImplementedError("Subclass must implement this method")
 
 
 class GammaPrepareData(PrepareData):
+    def extract_lonlat(self, lonlatfn: Path, ijfn: Path, llfn: Path) -> None:
+        """Extract the longitude and latitude of the candidate pixels. This is roughly
+        equivalent to the `psclonlat` program."""
+        raise NotImplementedError
+
     def run(self) -> None:
         pass
 
@@ -714,10 +860,15 @@ def run_snaphu_on(fn: Path, ncol: int) -> None:
             subprocess.call(cmd, stdout=out, stderr=out)
 
 
-def filedim(fn, width, ts) -> Tuple[int, int]:
-    """Determine the dimensions of data in a file."""
+def filedim(fn: Path, width: int, typestr: str) -> Tuple[int, int]:
+    """Determine the dimensions of data in a file based on a
+    width and numpy variable dtype string (typestr). e.g.,
+        typestr=">c8" for complex64
+        typestr=">f8" for float64
+        typestr=">f4" for float32
+    """
     size = fn.stat().st_size
-    nlines = size // (width * np.dtype(ts).itemsize)
+    nlines = size // (width * np.dtype(typestr).itemsize)
     return (nlines, width)
 
 
@@ -1613,7 +1764,7 @@ def topofit(
     C0 = C_trial[coh_high_max_ix]
     coh0 = coh_trial[coh_high_max_ix]
 
-    # Linearize and solve for residual phase
+    # Linearise and solve for residual phase
     resphase = cpxphase * np.exp(-1j * (K0 * bperp))
     offset_phase = np.sum(resphase)
     resphase = np.angle(resphase * np.conj(offset_phase))
