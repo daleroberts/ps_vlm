@@ -99,7 +99,7 @@ class dotdict(dict):
 
 
 class PrepareData:
-    """Base class for the data preprocessing steps.
+    """Base class for the initial data preprocessing steps.
 
     This should be subclassed for each specific data format (e.g. GAMMA, GSAR,
     SNAP, etc.). However, a lot of the common functionality can be implemented
@@ -128,7 +128,7 @@ class PrepareData:
         self.processor = PROCESSOR
 
         self.master_date = master_date
-        self.datadir = datadir
+        self.datadir = datadir.resolve()
         self.da_thresh = da_thresh
         self.rg_patches = rg_patches
         self.az_patches = az_patches
@@ -140,7 +140,6 @@ class PrepareData:
         self.precision = "f"
         self.workdir = Path(".")  # cwd
 
-        log("# Stage 0: Preparing data")
 
         log(f"master_date = {self.master_date}")
         log(f"datadir = {self.datadir}")
@@ -176,7 +175,13 @@ class PrepareData:
         self.generate_dem_config_file(self.workdir / "pscdem.in", self.workdir / "psclonlat.in")
         self.generate_patch_config_files()
 
-        slcs = (self.datadir / self.slcdir).glob("*.*slc")
+        slcs = list((self.datadir / self.slcdir).glob("*.*slc"))
+
+        log(f"Found {len(slcs)} SLCs to process in {self.datadir / self.slcdir}")
+
+        if len(slcs) == 0:
+            raise FileNotFoundError("No SLC files found")
+
         with open(self.workdir / "calamp.in", "w") as f:
             for slc in slcs:
                 f.write(f"{slc}\n")
@@ -247,6 +252,8 @@ class PrepareData:
     def generate_patch_config_files(self) -> None:
         """Generate the patch configuration files."""
 
+        log("Generating patch configuration files and directories")
+
         selfile = self.workdir / "selpsc.in"
         self.write_param_to_file(self.da_thresh, selfile)
         self.write_param_to_file(self.width, selfile)
@@ -258,12 +265,7 @@ class PrepareData:
         log(f"{width_p = }")
         log(f"{length_p = }")
 
-        # Remove any existing patch directories and patch list file
-
-        pds = self.workdir.glob("PATCH_*")
-        for p in pds:
-            p.unlink()
-        (self.workdir / "patch.list").unlink(missing_ok=True)
+        Path(self.workdir / "patch.list").unlink(missing_ok=True)
 
         # Generate the patch directories and patch list file
 
@@ -289,8 +291,9 @@ class PrepareData:
                 if end_az > self.length:
                     end_az = self.length
 
-                patch_dir = self.workdir / f"PATCH_{irg * self.az_patches + iaz}"
+                patch_dir = self.workdir / f"PATCH_{irg * self.az_patches + iaz + 1}"
                 patch_dir.mkdir(exist_ok=True)
+                log(f"Creating patch directory: {patch_dir}")
 
                 with open(patch_dir / "patch.in", "w") as f:
                     f.write(f"{start_rg}\n")
@@ -319,6 +322,8 @@ class PrepareData:
         """Calibrate the amplitude of the SLC data. This is equivalent to the
         `calamp` program."""
 
+        log(f"Calibrating amplitude, using config file: `{infile.resolve()}`")
+
         if prec == "s":
             typestr = ">h"
         else:
@@ -329,6 +334,8 @@ class PrepareData:
         with open("rsc.txt") as fd:
             masterfn = fd.readline().strip()
 
+        log(f"{masterfn = }")
+
         # read the heading parameter from the master observation
 
         with open(masterfn) as fd:
@@ -337,12 +344,16 @@ class PrepareData:
                     master_heading = float(line.split()[1])
                     break
 
+        log(f"{master_heading = }")
+
         # read the list of files to process from the input file
 
         fns = []
         with open(infile) as fd:
             for line in fd.readlines():
                 fns.append(line.strip())
+
+        log(f"{len(fns)} files to process")
 
         # open the parameter file associated with each file in 'fns'
         # and then read the heading parameter. If the heading is
@@ -1782,6 +1793,40 @@ def topofit(
 
     return K0, C0, coh0, phase_residual
 
+
+def stage0_preprocess() -> None:
+    """Preprocess the data for the first stage of the InSAR processing. This
+    includes the identification of candidate PS pixels."""
+
+    log("# Stage 0: Identifying candidate PS pixels and preprocessing data")
+
+    # Magically identify the processor class
+
+    processor_class = {
+        cls.__name__.replace("PrepareData", "").lower(): cls for cls in PrepareData.__subclasses__()
+    }[PROCESSOR]
+
+    master_date: str = "20200801"
+    datadir: Path = Path("..").resolve()
+    da_thresh: float = 0.4
+    rg_patches: int = 1
+    az_patches: int = 1
+    rg_overlap: int = 50
+    az_overlap: int = 50
+    maskfile: Optional[Path] = None
+
+    # Instantiate and run the processor
+
+    processor_class(
+        master_date,
+        datadir,
+        da_thresh,
+        rg_patches,
+        az_patches,
+        rg_overlap,
+        az_overlap,
+        maskfile,
+    ).run()
 
 def stage1_load_data(endian: str = "b") -> None:
     """Load all the data we need from GAMMA outputs, process it, and
@@ -6243,22 +6288,26 @@ def run_all_stages() -> None:
 
 
 def run_stage(i: int) -> None:
-    for p in patchdirs():
-        with chdir(p):
-            if i == 1:
-                stage1_load_data()
-            elif i == 2:
-                stage2_estimate_noise()
-            elif i == 3:
-                stage3_select_ps()
-            elif i == 4:
-                stage4_weed_ps()
-            elif i == 5:
-                stage5_correct_phases()
-            elif i == 6:
-                stage6_unwrap_phases()
-            elif i == 7:
-                stage7_calc_scla()
+    if i == 0:
+        stage0_preprocess()
+    else: 
+        for p in patchdirs():
+            with chdir(p):
+                if i == 1:
+                    stage1_load_data()
+                elif i == 2:
+                    stage2_estimate_noise()
+                elif i == 3:
+                    stage3_select_ps()
+                elif i == 4:
+                    stage4_weed_ps()
+                elif i == 5:
+                    stage5_correct_phases()
+                elif i == 6:
+                    stage6_unwrap_phases()
+                elif i == 7:
+                    stage7_calc_scla()
+
     log(f"\nStage {i} completed!\n")
 
 
@@ -6280,7 +6329,7 @@ def cli() -> None:
             raise ArgumentTypeError("Invalid stage range, it should be of the form 'n' or 'n-m'")
         start = int(ss[0])
         end = int(ss[1]) if len(ss) > 1 else start
-        if start < 1 or end > 7:
+        if start < 0 or end > 7:
             raise ArgumentTypeError("Invalid stage range, it should be between 1 and 7")
         return list(range(start, end + 1))
 
