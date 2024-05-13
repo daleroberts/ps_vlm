@@ -34,7 +34,7 @@ reference to this stage in the original documentation of StaMPS.
 The code has been written to have only minimal dependencies on external
 libraries. The only required python libraries are `numpy` and `scipy`. The
 code will also need access to the `triangle` and `snaphu` executables, which
-are used for the Delaunay triangulation and phase unwrapping steps.
+are used for various Delaunay triangulations and phase unwrapping, respectively.
 
 Note: At this stage the code is still under development and:
   - written in a single file for ease of (planned) refactoring,
