@@ -1861,7 +1861,9 @@ def stage0_preprocess(opts: dotdict = dotdict()) -> None:
         first_basefile = next((opts.datadir / "diff0").glob("*.base"), None)
         if first_basefile:
             master_date = first_basefile.stem[:8]
-            log(f"Master date automatically set to {master_date} based on data in `{first_basefile.parent}`")
+            log(
+                f"Master date automatically set to {master_date} based on data in `{first_basefile.parent}`"
+            )
         else:
             raise RuntimeError("Master date not found")
 
@@ -6605,27 +6607,58 @@ def cli() -> None:
 
         opts = load_and_normalise_config(args, args.config, other_opts)
 
-        if args.run is not None:
-            if len(args.run) == 0:
-                log("Running all stages: 0-7")
-                run_all_stages(opts=opts)
-            else:
-                stages = set(sorted([s for sec in args.run for s in sec]))
-                log(f"Running stages: {', '.join(map(str,stages))}")
-                for stage in stages:
-                    run_stage(stage, opts=opts)
-
-    except (ArgumentTypeError, RuntimeError) as e:
+    except ArgumentTypeError as e:
         log(f"\nError: {e}")
         sys.exit(1)
 
-    except MemoryError:
-        log("\nMemory Error: try running with more patches or less data.")
-        sys.exit(2)
+    restart_attempts = 0
+    restart = True
 
-    except KeyboardInterrupt:
-        log("\nInterrupted! User pressed Ctrl-C")
-        sys.exit(9)
+    while restart:
+        restart = False
+
+        try:
+            if args.run is not None:
+                if len(args.run) == 0:
+                    log("Running all stages: 0-7")
+                    run_all_stages(opts=opts)
+                else:
+                    stages = set(sorted([s for sec in args.run for s in sec]))
+                    log(f"Running stages: {', '.join(map(str,stages))}")
+                    for stage in stages:
+                        run_stage(stage, opts=opts)
+
+        except MemoryError:
+            # Try to recover from a memory error
+
+            log("Memory Error!")
+
+            old_rg_patches = opts["rg_patches"]
+            old_az_patches = opts["az_patches"]
+            opts["rg_patches"] *= 2
+            opts["az_patches"] *= 2
+
+            log(
+                "Attempting to run with more patches. "
+                f"rg_patches: {old_rg_patches} -> {opts['rg_patches']}, "
+                f"az_patches: {old_az_patches} -> {opts['az_patches']}"
+            )
+
+            restart_attempts += 1
+
+            if restart_attempts < 3:
+                restart = True
+            else:
+                log("Too many restart attempts. Exiting.")
+                sys.exit(1)
+
+        except (RuntimeError,) as e:
+            log(f"\nError: {e}")
+            sys.exit(1)
+
+        except KeyboardInterrupt:
+            log("\nInterrupted! User pressed Ctrl-C")
+            sys.exit(9)
 
 
 if __name__ == "__main__":
