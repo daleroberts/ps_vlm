@@ -3459,8 +3459,12 @@ def stage4_weed_ps(
         ps_std = np.full(n_ps, np.inf, dtype=np.float32)
         ps_max = np.full(n_ps, np.inf, dtype=np.float32)
         for i in range(n_edge):
-            ps_std[edgs[i, :]] = np.minimum(ps_std[edgs[i, :]], [edge_std[i], edge_std[i]])
-            ps_max[edgs[i, :]] = np.minimum(ps_max[edgs[i, :]], [edge_max[i], edge_max[i]])
+            ps_std[edgs[i, :]] = np.minimum(
+                ps_std[edgs[i, :]], [edge_std[i], edge_std[i], edge_std[i]]
+            )
+            ps_max[edgs[i, :]] = np.minimum(
+                ps_max[edgs[i, :]], [edge_max[i], edge_max[i], edge_max[i]]
+            )
 
         ix_weed2 = (ps_std < weed_standard_dev) & (ps_max < weed_max_noise)
         ix_weed[ix_weed] = ix_weed2
@@ -5432,15 +5436,12 @@ def uw_interp() -> None:
     II, JJ = np.meshgrid(np.arange(1, nrow + 1), np.arange(1, ncol + 1))
     PQ = np.column_stack((II.ravel(), JJ.ravel()))
 
-    use_triangle = False
-    if Path(TRIANGLE).exists():
-        use_triangle = True
-
     # Make i,j the indices of the non-zero indices which are the
     # pixel locations of the PS points in the grid (1-based indexing)
     jj, ii = np.where(nzix.T)
     ij = np.column_stack((np.arange(1, n_ps + 1), ii + 1, jj + 1))
 
+    use_triangle = True
     if use_triangle:
         log("Using TRIANGLE to generate a Delaunay triangulation")
 
@@ -6501,9 +6502,7 @@ def setup_logging(logging_config: Optional[Path] = None) -> None:
     if logging_config:
         log(f"Using logging configuration file: {logging_config}")
     else:
-        log(
-            "Using default logging configuration as no configuration file provided using `--logging_config`"
-        )
+        log("Using default logging configuration as no configfile provided using `--logconfig`")
 
 
 def load_and_normalise_config(
@@ -6642,11 +6641,11 @@ def cli() -> None:
     # Global options
 
     parser.add_argument("--nofancy", action="store_true", help="Disable fancy outputs")
-    parser.add_argument("--quiet", action="store_true", help="Disable verbose outputs")
+    parser.add_argument("-q", "--quiet", action="store_true", help="Disable verbose outputs")
     parser.add_argument("--logging", action="store_true", help="Use the `logging` module")
     parser.add_argument("--logconfig", type=Path, help="Use `logging` configuration file")
-    parser.add_argument("--config", type=Path, help="Configuration file in .toml format")
-    parser.add_argument("--debug", action="store_true", help="Enable debug outputs")
+    parser.add_argument("-c", "--config", type=Path, help="Configuration file in .toml format")
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug outputs")
     parser.add_argument("--test", action="store_true", help="Run the tests")
     parser.add_argument("--check", action="store_true", help="Check against MATLAB outputs")
     parser.add_argument("--triangle", type=parse_exec, default=TRIANGLE, help="Triangle executable")
@@ -6700,6 +6699,7 @@ def cli() -> None:
 
         if args.check:
             check_results()
+            sys.exit(0)
 
         if args.logging:
             setup_logging(args.logconfig)
@@ -6762,6 +6762,13 @@ def cli() -> None:
             else:
                 log("Too many restart attempts, exiting now.")
                 sys.exit(2)
+
+        except NotImplementedError:
+            import traceback
+
+            line = traceback.extract_tb(sys.exc_info()[2])[-1][1]
+            log(f"Attempted to run untested functionality at line {line}, exiting now.")
+            sys.exit(3)
 
         except (RuntimeError, FileNotFoundError) as e:
             log(f"\nError: {e}")

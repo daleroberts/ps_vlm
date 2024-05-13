@@ -5,33 +5,4 @@ set -e
 
 source /g/data/dg9/env
 
-echo "MATLABPATH=$MATLABPATH"
-echo "mt_prep_gamma=$(which mt_prep_gamma)"
-echo "calamp=$(which calamp)"
-
-master=$(ls -1 ../diff0 | head -1 | sed -e 's/\_.*//g')
-echo "master: $master"
-
-mt_prep_gamma ${master} $(cd ..; pwd) 0.3 1 1
-
-module load matlab/R2023b matlab_licence/anu
-
-matlab -nojvm -nosplash -nodisplay < $STAMPS/matlab/ps_parms_initial.m > ps_parms_initial.log
-
-matlab -nosplash -nodisplay <<EOF
-addpath ~/aludra;
-stamps(1,1);
-getparm();
-setparm('unwrap_gold_n_win', 8);
-setparm('scla_deramp', 'y');
-stamps(2,8);
-ps_plot('v', -1);
-!plot_to_geojson ps_plot_v.mat velocity_mean.geojson;
-ps_plot('u', -1);
-!plot_to_geojson ps_plot_u.mat unwrapped.geojson;
-ps_plot('vs', -1);
-!plot_to_geojson ps_plot_vs.mat velocity_std.geojson;
-quit;
-EOF
-
-module unload matlab/R2023b matlab_licence/anu
+~/aludra/StaMPS/python/stamps.py
