@@ -1,10 +1,10 @@
 #!/usr/bin/env python3.12
 """
-This file contains the Python implementation of:
+This is a Python implementation of:
 
-  Hooper A; Bekaert D; Spaans K; Arikan M (2012), Recent advances in SAR
+  "Hooper A; Bekaert D; Spaans K; Arikan M (2012), Recent advances in SAR
   interferometry time series analysis for measuring crustal deformation,
-  Tectonophysics, 514-517, pp.1-13. doi: 10.1016/j.tecto.2011.10.013
+  Tectonophysics, 514-517, pp.1-13. doi: 10.1016/j.tecto.2011.10.013".
 
 Otherwise known as the "Stanford Method for Persistent Scatterers" (StaMPS)
 methodology which is an InSAR persistent scatterer (PS) method developed to
@@ -69,8 +69,8 @@ np.set_printoptions(precision=4, suppress=True, linewidth=sys.maxsize, threshold
 
 # These constants can be overridden using command-line arguments
 
-TRIANGLE = "/Users/daleroberts/Work/.envbin/bin/triangle"
-SNAPHU = "/Users/daleroberts/Work/.envbin/bin/snaphu"
+TRIANGLE = os.getenv("TRIANGLE", "triangle")
+SNAPHU = os.getenv("SNAPHU", "snaphu")
 PROCESSOR = "gamma"
 FANCY_PROGRESS = True
 VERBOSE = True
@@ -154,8 +154,9 @@ class PrepareData:
         self.width = 0
         self.length = 0
         self.precision = "f"
-        self.workdir = Path(".")  # cwd
+        self.workdir = Path(".").resolve()
 
+        log(f"workdir = {self.workdir}")
         log(f"master_date = {self.master_date}")
         log(f"datadir = {self.datadir}")
         log(f"da_thresh = {self.da_thresh}")
@@ -258,6 +259,8 @@ class PrepareData:
     def generate_global_config_files(self) -> None:
         """Write some global parameters to the appropriate txt files."""
 
+        log("Generating global configuration files")
+
         self.write_param_to_file(self.processor, "processor")
         self.write_param_to_file(self.width, "width")
         self.write_param_to_file(self.length, "len")
@@ -265,6 +268,8 @@ class PrepareData:
 
     def generate_dem_config_file(self, demfn: Path, lonlatfn: Path) -> None:
         """Write the DEM parameters to `pscdem.in` file."""
+
+        log("Generating DEM configuration files")
 
         with open(demfn, "w") as f:
             f.write(f"{self.width}\n")
@@ -306,7 +311,11 @@ class PrepareData:
         # prefer to overwrite them. We cannot do the same for the
         # `patch.list` file as we append to it.
 
-        Path(self.workdir / "patch.list").unlink(missing_ok=True)
+        patch_list = (self.workdir / "patch.list").resolve()
+
+        log(f"Generating patch list file `{patch_list}`")
+
+        patch_list.unlink(missing_ok=True)
 
         # Generate the patch directories and patch list file
 
@@ -334,6 +343,8 @@ class PrepareData:
 
                 patch_dir = self.workdir / f"PATCH_{irg * self.az_patches + iaz + 1}"
                 patch_dir.mkdir(exist_ok=True)
+                patch_dir = patch_dir.resolve()
+
                 log(f"Creating patch directory: {patch_dir}")
 
                 with open(patch_dir / "patch.in", "w") as f:
@@ -449,16 +460,17 @@ class PrepareData:
 
                     fd.write(f"{fn} {mean_amp}\n")
 
-                    log(f"{i:3d}: {fn} mean_amp: {mean_amp:.4f}")
+                    log(f"{fn} mean_amp: {mean_amp:.4f}")
                 except ValueError as e:
                     log(f"Error processing {fn}: {e}")
 
         mu = np.nanmean(mean_amps)
         sd = np.nanstd(mean_amps)
 
+        log(f"Files with mean_amp outside 2 sigma: {mu:.4f} +/- {sd:.4f} are flagged with a '*'")
         for i, fn in enumerate(fns):
             star = " " if np.abs(mean_amps[i] - mu) < 2 * sd else "*"
-            print(f"{i:3d}: {fn} mean_amp: {mean_amps[i]:+8.4f} sd_amp: {sd_amps[i]:+8.4f} {star}")
+            print(f"{fn} mean_amp: {mean_amps[i]:+8.4f} sd_amp: {sd_amps[i]:+8.4f} {star}")
 
     def generate_diff_config_files(
         self, master_date: str, calampfn: Path, pscphasefn: Path
@@ -466,6 +478,8 @@ class PrepareData:
         """Generate the differential interferogram configuration file. Basically,
         use the calibrated amplitude file to generate the differential interferograms
         filenames and write them to a file."""
+
+        log("Generating interferogram configuration files")
 
         with open(calampfn) as fd, open(pscphasefn, "w") as fo:
             for line in fd:
@@ -543,7 +557,7 @@ class PrepareData:
         """Select candidate pixels from the SLC data. This is equivalent to the
         `selpsc_patch` program."""
 
-        log("Selecting candidate pixels")
+        log("Identifying candidate pixels")
 
         if precision == "s":
             raise NotImplementedError
@@ -676,6 +690,8 @@ class PrepareData:
         """Extract the longitude and latitude of the candidate pixels. This is roughly
         equivalent to the `psclonlat` program."""
 
+        log("Extracting lon/lat pairs corresponding to the candidate pixels")
+
         with open(lonlatfn, "r") as f:
             width = int(f.readline().strip())
             lonfn = f.readline().strip()
@@ -695,6 +711,8 @@ class PrepareData:
     def extract_heights(self, demfn: Path, ijfn: Path, hgtfn: Path) -> None:
         """Extract the heights of the candidate pixels. This is roughly equivalent
         to the `pscdem` program."""
+
+        log("Extracting heights of the candidate pixels")
 
         with open(demfn) as fd:
             width = int(fd.readline().strip())
@@ -717,7 +735,11 @@ class PrepareData:
         """Extract the phase of the candidate pixels. This is roughly equivalent
         to the `pscphase` program."""
 
+        log("Extracting time series of phases of the candidate pixels")
+
         typestr = ">c8"
+
+        log(f"Reading parameters from `{paramfn.resolve()}`")
 
         with open(paramfn) as fd:
             width = int(fd.readline().strip())
@@ -757,14 +779,18 @@ class PrepareData:
                 mean_abs_phs[i] = mean_abs_ph
                 log(f"\tmean_phase: {mean_ph:+8.4f}\tmean_abs_phase: {mean_abs_ph:+8.4f}")
 
+        log(f"Phase time series data of shape {(nfiles, nijs)} written to file `{phfn}`")
+
         mu = np.mean(mean_abs_phs)
         sigma = np.std(mean_abs_phs)
+
+        log("Summary of mean absolute phases:")
 
         log(f"mean_abs_phs: {mu:+8.4f} +/- {sigma:+8.4f}")
 
         for i, fn in enumerate(ifgfns):
             star = " " if np.abs(mean_abs_phs[i] - mu) < 2 * sigma else "*"
-            log(f"{i:3d}: {fn} {mean_abs_phs[i]:+8.4f} {star}")
+            log(f"{fn} {mean_abs_phs[i]:+8.4f} {star}")
 
     def run(self) -> None:
         raise NotImplementedError("Subclass must implement this method")
@@ -1357,7 +1383,7 @@ def getparm(parmname: Optional[str] = None, verbose: bool = True) -> str:
 
     # Load global parameters
 
-    parmfile = Path("parms.mat").absolute()
+    parmfile = Path("parms.mat").resolve()
     if parmfile.exists():
         parms = loadmat(str(parmfile))
     elif (parmfile.parent.parent / parmfile.name).exists():
@@ -1465,9 +1491,10 @@ def patchdirs() -> List[Path]:
 
     patchlist = Path("patch.list")
     if patchlist.exists():
-        # read directory names from `patch.list`
+        log(f"Reading directory names from `{patchlist}`")
         with patchlist.open("r") as f:
-            dirs = [Path(line.strip()) for line in f.readlines()]
+            dirs = [Path(line.strip()).resolve() for line in f.readlines()]
+            log(f"Found {len(dirs)} directories in `patch.list`: {dirs}")
     else:
         # if patch.list does not exist, find all directories with PATCH_ in the name
         dirs = [d for d in Path(".").iterdir() if d.is_dir() and "PATCH_" in d.name]
@@ -1907,7 +1934,9 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
 
     # Read interferogram dates
     with pscname.open() as f:
-        ifgs = [Path(line.strip()) for line in f.readlines()][1:]
+        ifgs = sorted([Path(line.strip()) for line in f.readlines()])
+
+    print(f"{ifgs = } {len(ifgs) = }")
 
     datestr = f"{rslcpar.name[0:4]}-{rslcpar.name[4:6]}-{rslcpar.name[6:8]}"
     master_day = datenum(np.datetime64(datestr))
@@ -1994,7 +2023,7 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
 
     log("Mean perpendicular baseline for each interferogram:")
     for i in range(n_ifg):
-        log(f"{i+1}:\t{ifgs[i]}\tmean(bperp) = {bperp[i]:+.3f}")
+        log(f"{ifgs[i]}\tmean(bperp) = {bperp[i]:+.3f}")
 
     # Calculate incidence angles
     inci = np.arccos((se**2 - re**2 - rg**2) / (2 * re * rg))
@@ -2007,13 +2036,19 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
 
     # Processing of the phase data
     with phname.open("rb") as f:
-        log(f"Loading phase data from `{phname.absolute()}`")
-        ph = np.fromfile(f, dtype=">c8").reshape((n_ifg, n_ps)).T
+        log(f"Loading phase time series data from `{phname.resolve()}`")
+        try:
+            ph = np.fromfile(f, dtype=">c8").reshape((n_ifg, n_ps)).T
+        except ValueError:
+            f_n_ifg, f_n_ps = filedim(phname, n_ps, ">c8")
+            raise RuntimeError(
+                f"Wrong dimensions for `{phname}`. File shape {f_n_ps}x{f_n_ifg} and expected is {n_ps}x{n_ifg}"
+            )
 
     # Calculate mean phases
     mu = np.mean(ph, axis=0)
     for i in range(n_ifg):
-        log(f"{i+1}:\t{ifgs[i]}\tmean(phase) = {mu[i]:+.3f}")
+        log(f"{ifgs[i]}\tmean(phase) = {mu[i]:+.3f}")
     log(f"{ph.shape = }")
 
     log(f"{bperp.shape = }")
@@ -2129,8 +2164,6 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     stamps_save(f"la{psver}", la)  # incidence angles (n_ps,) - radians
     stamps_save(f"da{psver}", D_A)  # dispersion (fano factor) (n_ps,) - unitless
     stamps_save(f"hgt{psver}", hgt)  # height data (n_ps,) - meters
-
-    log("Stage 1 complete.")
 
 
 def stage2_estimate_noise(max_iters: int = 1000, opts: dotdict = dotdict()) -> None:
@@ -2507,8 +2540,6 @@ def stage2_estimate_noise(max_iters: int = 1000, opts: dotdict = dotdict()) -> N
         # coh_ps_save=coh_ps_save,
         # gamma_change_save=gamma_change_save,
     )
-
-    log("Stage 2 complete.")
 
 
 def stage3_select_ps(reest_flag: int = 0, opts: dotdict = dotdict()) -> None:
@@ -2989,8 +3020,6 @@ def stage3_select_ps(reest_flag: int = 0, opts: dotdict = dotdict()) -> None:
         small_baseline_flag=small_baseline_flag,  # small baseline flag (string) - unitless
         ifg_index=ifg_index + 1,  # 1-based indexing to match MATLAB
     )
-
-    log("Stage 3 complete.")
 
 
 def stage4_weed_ps(
@@ -3528,8 +3557,6 @@ def stage4_weed_ps(
         bperp_mat = bperp_mat[ix_weed, :]
         stamps_save(f"bp{psver + 1}", bperp_mat)  # baseline data (n_ps, n_ifg) - meters
 
-    log("Stage 4 complete.")
-
 
 def stage5_correct_phases(opts: dotdict = dotdict()) -> None:
     """
@@ -3607,8 +3634,6 @@ def stage5_correct_phases(opts: dotdict = dotdict()) -> None:
             ph_rc=ph_rc,  # phase data (n_ps, n_ifg) - complex
             ph_reref=ph_reref,  # phase reference (n_ps, n_ifg) - complex
         )
-
-    log("Stage 5 complete.")
 
 
 def ps_calc_ifg_std() -> None:
@@ -6042,31 +6067,35 @@ def ts_export_csv() -> None:
         name = ijns[i, 2]
         log(f"{lon0} {lat0} {name}")
 
-        data = {
-            "date": dds,
-            "u": uw[:, i],
-            "p": p[:, i],
-            "u-d": u_d[:, i],
-            "u-m": u_m[:, i],
-            "u-o": u_o[:, i],
-            "u-dmo": u_dmo[:, i],
-        }
+        data = dotdict(
+            {
+                "date": dds,
+                "u": uw[:, i],
+                "p": p[:, i],
+                "u-d": u_d[:, i],
+                "u-m": u_m[:, i],
+                "u-o": u_o[:, i],
+                "u-dmo": u_dmo[:, i],
+            }
+        )
 
         with open(f"{i+1}.csv", "w", newline="") as file:
             writer = csv.writer(file)
             writer.writerow(data.keys())
             writer.writerows(zip(*data.values()))
 
-    data = {
-        "Index": np.arange(1, nlls + 1),
-        "Master_AOE": m,
-        "Lon": lls[:, 0],
-        "Lat": lls[:, 1],
-        "Height": hgt,
-        "Azimuth_Line": ijns[:, 0].astype(int),
-        "Range_Sample": ijns[:, 1].astype(int),
-        "Name": ijns[:, 2],
-    }
+    data = dotdict(
+        {
+            "Index": np.arange(1, nlls + 1),
+            "Master_AOE": m,
+            "Lon": lls[:, 0],
+            "Lat": lls[:, 1],
+            "Height": hgt,
+            "Azimuth_Line": ijns[:, 0].astype(int),
+            "Range_Sample": ijns[:, 1].astype(int),
+            "Name": ijns[:, 2],
+        }
+    )
 
     with open("ts.csv", "w", newline="") as file:
         writer = csv.writer(file)
@@ -6332,19 +6361,20 @@ def run_tests() -> None:
 
 def run_all_stages(opts: dotdict = dotdict()) -> None:
     """Run all stages."""
-    for p in patchdirs():
-        with chdir(p):
-            for i in range(8):
-                run_stage(i, opts=opts)
+    for i in range(8):
+        run_stage(i, opts=opts)
     log("\nAll stages completed!\n")
 
 
 def run_stage(i: int, opts: dotdict = dotdict()) -> None:
     """Run a specific stage."""
     if i == 0:
+        cwd = Path.cwd()
+        log(f"Running stage {i} in {cwd}")
         stage0_preprocess(opts=opts)
     else:
         for p in patchdirs():
+            log(f"Running stage {i} in {p}")
             with chdir(p):
                 if i == 1:
                     stage1_load_data(opts=opts)
@@ -6361,7 +6391,67 @@ def run_stage(i: int, opts: dotdict = dotdict()) -> None:
                 elif i == 7:
                     stage7_calc_scla(opts=opts)
 
-    log(f"\nStage {i} completed!\n")
+    log(f"\nStage {i} complete!\n")
+
+
+def parse_human_size(size: str) -> int:
+    """Parse a human-readable size string."""
+    size = size.upper()
+    if size.endswith("KB"):
+        return int(float(size[:-2]) * 1024)
+    if size.endswith("MB"):
+        return int(float(size[:-2]) * 1024**2)
+    if size.endswith("GB"):
+        return int(float(size[:-2]) * 1024**3)
+    if size.endswith("TB"):
+        return int(float(size[:-2]) * 1024**4)
+    if size.endswith("B"):
+        return int(size[:-1])
+    raise RuntimeError(f"Invalid size string `{size}`")
+
+
+def human_size(size: int) -> str:
+    """Convert a size in bytes to a human-readable string."""
+    x = float(size)
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if x < 1024:
+            return f"{x:.2f}{unit}"
+        x /= 1024
+    return f"{x:.2f}PB"
+
+
+def max_memory_used() -> int:
+    """Return the maximum memory used by the process."""
+    import resource
+
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
+
+def limit_memory(maxmem: int | str) -> None:
+    """Limit the maximum memory usage."""
+    import resource
+    import atexit
+
+    # If not running on Linux, do nothing
+
+    if isinstance(maxmem, str):
+        maxmem = parse_human_size(maxmem)
+
+    if sys.platform != "linux" or maxmem < 0:
+        return
+
+    curmem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    curmax = resource.getrlimit(resource.RLIMIT_AS)[1]
+
+    log(
+        f"Limiting memory usage from {human_size(curmax)} to {human_size(maxmem)}. Current usage: {human_size(curmem)}"
+    )
+
+    resource.setrlimit(resource.RLIMIT_AS, (maxmem, maxmem))
+
+    # At exit, print out the maximum memory used
+
+    atexit.register(lambda: log(f"Maximum memory used: {human_size(max_memory_used())}"))
 
 
 def setup_logging(logging_config: Optional[Path] = None) -> None:
@@ -6518,7 +6608,7 @@ def cli() -> None:
     global VERBOSE
     global DEBUG
 
-    from argparse import ArgumentTypeError, ArgumentParser
+    from argparse import ArgumentTypeError, ArgumentParser, ArgumentDefaultsHelpFormatter
 
     def parse_stages(s: str) -> list[int]:
         """Parse the stage range argument."""
@@ -6544,7 +6634,10 @@ def cli() -> None:
             raise ArgumentTypeError(f"Dependency '{p}' cannot be run: {e}")
         return Path(p)
 
-    parser = ArgumentParser()
+    parser = ArgumentParser(
+        description=" ".join(__doc__.split("\n")[:14]),
+        formatter_class=ArgumentDefaultsHelpFormatter,
+    )
 
     # Global options
 
@@ -6552,19 +6645,22 @@ def cli() -> None:
     parser.add_argument("--quiet", action="store_true", help="Disable verbose outputs")
     parser.add_argument("--logging", action="store_true", help="Use the `logging` module")
     parser.add_argument("--logconfig", type=Path, help="Use `logging` configuration file")
-    parser.add_argument("--config", type=Path, help="Use configuration file (toml format)")
+    parser.add_argument("--config", type=Path, help="Configuration file in .toml format")
     parser.add_argument("--debug", action="store_true", help="Enable debug outputs")
     parser.add_argument("--test", action="store_true", help="Run the tests")
     parser.add_argument("--check", action="store_true", help="Check against MATLAB outputs")
-    parser.add_argument("--triangle", type=parse_exec, default=TRIANGLE, help=f"='{TRIANGLE}'")
-    parser.add_argument("--snaphu", type=parse_exec, default=SNAPHU, help=f"='{SNAPHU}'")
+    parser.add_argument("--triangle", type=parse_exec, default=TRIANGLE, help="Triangle executable")
+    parser.add_argument("--snaphu", type=parse_exec, default=SNAPHU, help="Snaphu executable")
     parser.add_argument("--processor", type=str, default="gamma", help="Processor to use")
+    parser.add_argument("--maxmem", type=str, default="-1B", help="Maximum memory usage")
     parser.add_argument("run", nargs="*", type=parse_stages, metavar="1 2 3-5")
 
     # Model options
 
-    parser.add_argument("--master_date", type=str, default="", help="Master date")
     parser.add_argument("--datadir", type=Path, default=Path(".."), help="Data directory")
+    parser.add_argument(
+        "--master_date", type=str, default="", help="Master date", metavar="YYYYMMDD"
+    )
     parser.add_argument("--da_thresh", type=float, default=0.4, help="DA threshold")
     parser.add_argument("--rg_patches", type=int, default=1, help="Number of range patches")
     parser.add_argument("--az_patches", type=int, default=1, help="Number of azimuth patches")
@@ -6577,6 +6673,9 @@ def cli() -> None:
         # that are not defined in the parser but will be passed to the model
 
         args, other_opts = parser.parse_known_args()
+
+        if args.maxmem:
+            limit_memory(args.maxmem)
 
         if args.triangle:
             TRIANGLE = args.triangle
@@ -6611,14 +6710,17 @@ def cli() -> None:
         log(f"\nError: {e}")
         sys.exit(1)
 
+    # To allow large-scale processing, we catch memory errors and try to restart the process
+    # with more patches. We allow up to 3 restart attempts. This can be used in conjunction
+    # with the --maxmem option to limit the memory usage so that the supercomputer does not
+    # kill the process.
+
     restart_attempts = 0
     restart = True
 
     while restart:
-        restart = False
-
         try:
-            if args.run is not None:
+            if restart_attempts == 0:
                 if len(args.run) == 0:
                     log("Running all stages: 0-7")
                     run_all_stages(opts=opts)
@@ -6628,10 +6730,19 @@ def cli() -> None:
                     for stage in stages:
                         run_stage(stage, opts=opts)
 
-        except MemoryError:
+            else:
+                log("Restarting after memory error and running all stages")
+                run_all_stages(opts=opts)
+
+            restart = False
+
+        except (MemoryError, np.core._exceptions._ArrayMemoryError):  # type: ignore
             # Try to recover from a memory error
 
             log("Memory Error!")
+
+            # We double the number of patches in both directions, effectively
+            # quartering the patch size
 
             old_rg_patches = opts["rg_patches"]
             old_az_patches = opts["az_patches"]
@@ -6649,10 +6760,10 @@ def cli() -> None:
             if restart_attempts < 3:
                 restart = True
             else:
-                log("Too many restart attempts. Exiting.")
-                sys.exit(1)
+                log("Too many restart attempts, exiting now.")
+                sys.exit(2)
 
-        except (RuntimeError,) as e:
+        except (RuntimeError, FileNotFoundError) as e:
             log(f"\nError: {e}")
             sys.exit(1)
 
