@@ -11,13 +11,13 @@ methodology which is an InSAR persistent scatterer (PS) method developed to
 work even in terrains devoid of man-made structures and/or undergoing
 non-steady deformation.
 
-This Python implementation was written by Dale Roberts, and is based
-on the original MATLAB code by Andrew Hooper et al.
+This Python implementation is written by Dale Roberts (github.com/daleroberts),
+and is based on the original MATLAB code by Andrew Hooper et al.
 
 The methodology consists of the following stages:
 
   - Stage 0: Preprocessing and finding candidate PS pixels
-  - Stage 1: Load data from preprocessed outputs
+  - Stage 1: Load data for the candidate PS pixels
   - Stage 2: Estimate the initial coherence
   - Stage 3: Select stable pixels from candidate pixels
   - Stage 4: Weeding out unstable pixels chosen in stage 3
@@ -67,16 +67,25 @@ from numpy.typing import NDArray as Array
 
 np.set_printoptions(precision=4, suppress=True, linewidth=sys.maxsize, threshold=sys.maxsize)
 
-DEBUG = False
-VERBOSE = False
+# These constants can be overridden using command-line arguments
+
 TRIANGLE = "/Users/daleroberts/Work/.envbin/bin/triangle"
 SNAPHU = "/Users/daleroberts/Work/.envbin/bin/snaphu"
-FANCY_PROGRESS = True
 PROCESSOR = "gamma"
+FANCY_PROGRESS = True
+USE_LOGGING = True
+VERBOSE = True
+DEBUG = False
 
 
 class dotdict(dict):
-    """A dictionary that allows access to its keys as attributes."""
+    """
+    A dictionary that allows access to its keys as attributes.
+
+    This gives MATLAB style dot access to dictionary keys. For example, instead
+    of `d['key']` you can use `d.key`. All dict-style data loaded from the
+    StaMPS files using `stamps_load` will be stored in this type of dictionary.
+    """
 
     @no_type_check
     def __getattr__(self, x):
@@ -99,19 +108,27 @@ class dotdict(dict):
 
 
 class PrepareData:
-    """Base class for the initial data preprocessing steps.
+    """
+    Base class for "Stage 0" of the StaMPS processing chain.
 
-    This should be subclassed for each specific data format (e.g. GAMMA, GSAR,
-    SNAP, etc.). However, a lot of the common functionality can be implemented
-    in this class.
+    This stage takes care of finding candidate pixels for persistent scatterers
+    in the SLC data. Once the candidate pixels have been identified, the phase
+    time series are extracted for each candidate pixel and all their associated
+    data such as locations (lon/lat), heights, etc.
 
     This replaces all the bash and C++ code in the original StaMPS code with
     Python code. The main goal is to make the code more readable and easier to
     maintain.
 
+    This class should be subclassed for each specific data format (e.g. GAMMA,
+    GSAR, SNAP, etc.). However, a lot of the common functionality can be
+    implemented in this (base) class.
+
     Depending on the value of PROCESSOR (e.g. "gamma", "doris", "snap", "gsar"),
-    the appropriate data processing class will be instantiated when "Stage 0" is
-    run.
+    the appropriate data processing class will be (magically) instantiated when
+    "Stage 0" is run. If you want to implement the "Foo" processor, you will
+    need to subclass this class and name it "FooPrepareData". Then it can be
+    used by setting PROCESSOR to "foo" (using the command-line argument).
     """
 
     def __init__(
@@ -140,7 +157,6 @@ class PrepareData:
         self.precision = "f"
         self.workdir = Path(".")  # cwd
 
-
         log(f"master_date = {self.master_date}")
         log(f"datadir = {self.datadir}")
         log(f"da_thresh = {self.da_thresh}")
@@ -151,10 +167,12 @@ class PrepareData:
         log(f"maskfile = {self.maskfile}")
 
         # Find the SLC directory
+
         self.slcdir = next(self.datadir.glob("*slc"), None)
         assert self.slcdir is not None, f"SLC directory not found in {self.datadir}"
 
         # Find the RSC file
+
         self.rscfile = next((self.datadir / self.slcdir).glob(f"{self.master_date}.*slc.par"), None)
         assert self.rscfile is not None, f"RSC file not found in {self.datadir / self.slcdir}"
         self.rscfile = self.rscfile.resolve()  # get the full path
@@ -171,16 +189,30 @@ class PrepareData:
         log(f"length = {self.length}")
         log(f"precision = {self.precision} ({prec})")
 
+        # Generate some global configuration files (width, length, processor, etc.)
+
         self.generate_global_config_files()
+
+        # Generate the dem configuration files. This configuration file is used by
+        # the `extract_lonlats`, `extract_heights`, and `extract_phases` methods.
+
         self.generate_dem_config_file(self.workdir / "pscdem.in", self.workdir / "psclonlat.in")
+
+        # Generate the patch configuration files. These are used by the `select_candidate_pixels`
+        # method to extract the candidate pixels from the SLC data.
+
         self.generate_patch_config_files()
+
+        # Find the SLC files
 
         slcs = list((self.datadir / self.slcdir).glob("*.*slc"))
 
         log(f"Found {len(slcs)} SLCs to process in {self.datadir / self.slcdir}")
 
         if len(slcs) == 0:
-            raise FileNotFoundError("No SLC files found")
+            raise FileNotFoundError(f"No SLC files found in {self.datadir / self.slcdir}")
+
+        # Calibrate the amplitude of the SLC data
 
         with open(self.workdir / "calamp.in", "w") as f:
             for slc in slcs:
@@ -193,6 +225,8 @@ class PrepareData:
             prec,
             maskfile=self.maskfile,
         )
+
+        # Generate the differential interferogram configuration files
 
         self.generate_diff_config_files(
             self.master_date, self.workdir / "calamp.out", self.workdir / "pscphase.in"
@@ -212,7 +246,7 @@ class PrepareData:
         return width, length, precision
 
     def write_param_to_file(self, x: Any, name: str | Path) -> None:
-        """Write a parameter to a file."""
+        """Write a parameter to a basic txt file."""
 
         if not Path(name).suffix:
             name = Path(f"{name}.txt")
@@ -223,7 +257,7 @@ class PrepareData:
             file.write(f"{x}\n")
 
     def generate_global_config_files(self) -> None:
-        """Write some global parameters to the appropriate files"""
+        """Write some global parameters to the appropriate txt files."""
 
         self.write_param_to_file(self.processor, "processor")
         self.write_param_to_file(self.width, "width")
@@ -231,7 +265,7 @@ class PrepareData:
         self.write_param_to_file(str(self.rscfile), "rsc")
 
     def generate_dem_config_file(self, demfn: Path, lonlatfn: Path) -> None:
-        """Write the DEM parameters to `pscdem.in` file"""
+        """Write the DEM parameters to `pscdem.in` file."""
 
         with open(demfn, "w") as f:
             f.write(f"{self.width}\n")
@@ -254,6 +288,9 @@ class PrepareData:
 
         log("Generating patch configuration files and directories")
 
+        # Generate the `selpsc.in` file, this is later used by the
+        # `select_candidate_pixels` method
+
         selfile = self.workdir / "selpsc.in"
         self.write_param_to_file(self.da_thresh, selfile)
         self.write_param_to_file(self.width, selfile)
@@ -264,6 +301,11 @@ class PrepareData:
 
         log(f"{width_p = }")
         log(f"{length_p = }")
+
+        # Remove the old patch list file, if it exists.
+        # Note that we do not remove the patch directories as we
+        # prefer to overwrite them. We cannot do the same for the
+        # `patch.list` file as we append to it.
 
         Path(self.workdir / "patch.list").unlink(missing_ok=True)
 
@@ -306,6 +348,8 @@ class PrepareData:
                     f.write(f"{end_rg1}\n")
                     f.write(f"{start_az1}\n")
                     f.write(f"{end_az1}\n")
+
+                # Append to the patch list file
 
                 with open(self.workdir / "patch.list", "a") as f:
                     f.write(f"{patch_dir}\n")
@@ -757,11 +801,14 @@ def log(msg: str) -> None:
     if msg.startswith("#"):
         print("\n+" + msg[1:] + "\n")
     else:
-        print(msg, file=sys.stderr)
+        print(msg)
 
 
 def show_progress(step: int, total: int, title: Optional[str] = None) -> None:
     """Show a progress bar."""
+
+    if not VERBOSE:
+        return
 
     def simple() -> None:
         incr = total // 10
@@ -1794,7 +1841,7 @@ def topofit(
     return K0, C0, coh0, phase_residual
 
 
-def stage0_preprocess() -> None:
+def stage0_preprocess(opts: dotdict = dotdict()) -> None:
     """Preprocess the data for the first stage of the InSAR processing. This
     includes the identification of candidate PS pixels."""
 
@@ -1802,33 +1849,38 @@ def stage0_preprocess() -> None:
 
     # Magically identify the processor class
 
-    processor_class = {
-        cls.__name__.replace("PrepareData", "").lower(): cls for cls in PrepareData.__subclasses__()
-    }[PROCESSOR]
+    try:
+        processor_class = {
+            cls.__name__.replace("PrepareData", "").lower(): cls
+            for cls in PrepareData.__subclasses__()
+        }[PROCESSOR]
+    except KeyError:
+        raise RuntimeError(f"Processor `{PROCESSOR}` not found")
 
-    master_date: str = "20200801"
-    datadir: Path = Path("..").resolve()
-    da_thresh: float = 0.4
-    rg_patches: int = 1
-    az_patches: int = 1
-    rg_overlap: int = 50
-    az_overlap: int = 50
-    maskfile: Optional[Path] = None
+    if len(opts.master_date) == 0:
+        # Find the master date from the intereferogram base files
+        first_basefile = next((opts.datadir / "diff0").glob("*.base"), None)
+        if first_basefile:
+            master_date = first_basefile.stem[:8]
+            log(f"Master date automatically set to {master_date} based on data in `{first_basefile.parent}`")
+        else:
+            raise RuntimeError("Master date not found")
 
     # Instantiate and run the processor
 
     processor_class(
         master_date,
-        datadir,
-        da_thresh,
-        rg_patches,
-        az_patches,
-        rg_overlap,
-        az_overlap,
-        maskfile,
+        opts.datadir,
+        opts.da_thresh,
+        opts.rg_patches,
+        opts.az_patches,
+        opts.rg_overlap,
+        opts.az_overlap,
+        opts.maskfile,
     ).run()
 
-def stage1_load_data(endian: str = "b") -> None:
+
+def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     """Load all the data we need from GAMMA outputs, process it, and
     save it into our own data format."""
 
@@ -2080,7 +2132,7 @@ def stage1_load_data(endian: str = "b") -> None:
     log("Stage 1 complete.")
 
 
-def stage2_estimate_noise(max_iters: int = 1000) -> None:
+def stage2_estimate_noise(max_iters: int = 1000, opts: dotdict = dotdict()) -> None:
     """For each persistent scatterer candidate, estimate the noise in the phase data.
 
     This is an iterative process that uses the Goldstein adaptive phase filtering
@@ -2458,7 +2510,7 @@ def stage2_estimate_noise(max_iters: int = 1000) -> None:
     log("Stage 2 complete.")
 
 
-def stage3_select_ps(reest_flag: int = 0) -> None:
+def stage3_select_ps(reest_flag: int = 0, opts: dotdict = dotdict()) -> None:
     """
     Select persistent scatterers based on coherence and phase stability. This
     stage is an iterative process that selects stable-phase pixels based on
@@ -2944,6 +2996,7 @@ def stage4_weed_ps(
     all_da_flag: bool = False,
     no_weed_adjacent: bool = False,
     no_weed_noisy: bool = False,
+    opts: dotdict = dotdict(),
 ) -> None:
     """
     PS selected in the previous stage are possibly dropped if they are adjacent
@@ -3477,7 +3530,7 @@ def stage4_weed_ps(
     log("Stage 4 complete.")
 
 
-def stage5_correct_phases() -> None:
+def stage5_correct_phases(opts: dotdict = dotdict()) -> None:
     """
     Correct the wrapped phases of the selected PS for spatially-uncorrelated
     look angle (DEM) error. This is done by subtracting the range error and
@@ -3626,7 +3679,7 @@ def ps_calc_ifg_std() -> None:
     stamps_save(f"ifgstd{psver}", ifg_std=ifg_std)
 
 
-def stage6_unwrap_phases() -> None:
+def stage6_unwrap_phases(opts: dotdict = dotdict()) -> None:
     """Unwrap the corrected phases of the selected PS using a space-time approach.
 
     This stage unwraps the corrected phases of the selected PS by applying
@@ -5461,7 +5514,9 @@ def uw_interp() -> None:
     log("Interpolation done")
 
 
-def stage7_calc_scla(use_small_baselines: int = 0, coest_mean_vel: int = 0) -> None:
+def stage7_calc_scla(
+    use_small_baselines: int = 0, coest_mean_vel: int = 0, opts: dotdict = dotdict()
+) -> None:
     """Estimate spatially-correlated look angle error."""
 
     log("# Stage 7: Estimating spatially-correlated look angle error")
@@ -6274,41 +6329,183 @@ def run_tests() -> None:
     log("\nAll tests passed!\n")
 
 
-def run_all_stages() -> None:
+def run_all_stages(opts: dotdict = dotdict()) -> None:
+    """Run all stages."""
     for p in patchdirs():
         with chdir(p):
-            stage1_load_data()
-            stage2_estimate_noise()
-            stage3_select_ps()
-            stage4_weed_ps()
-            stage5_correct_phases()
-            stage6_unwrap_phases()
-            stage7_calc_scla()
+            for i in range(8):
+                run_stage(i, opts=opts)
     log("\nAll stages completed!\n")
 
 
-def run_stage(i: int) -> None:
+def run_stage(i: int, opts: dotdict = dotdict()) -> None:
+    """Run a specific stage."""
     if i == 0:
-        stage0_preprocess()
-    else: 
+        stage0_preprocess(opts=opts)
+    else:
         for p in patchdirs():
             with chdir(p):
                 if i == 1:
-                    stage1_load_data()
+                    stage1_load_data(opts=opts)
                 elif i == 2:
-                    stage2_estimate_noise()
+                    stage2_estimate_noise(opts=opts)
                 elif i == 3:
-                    stage3_select_ps()
+                    stage3_select_ps(opts=opts)
                 elif i == 4:
-                    stage4_weed_ps()
+                    stage4_weed_ps(opts=opts)
                 elif i == 5:
-                    stage5_correct_phases()
+                    stage5_correct_phases(opts=opts)
                 elif i == 6:
-                    stage6_unwrap_phases()
+                    stage6_unwrap_phases(opts=opts)
                 elif i == 7:
-                    stage7_calc_scla()
+                    stage7_calc_scla(opts=opts)
 
     log(f"\nStage {i} completed!\n")
+
+
+def setup_logging(logging_config: Optional[Path] = None) -> None:
+    """Setup to use the `logging` module."""
+
+    import logging
+    import logging.config
+
+    global show_progress
+    global log
+
+    logging.basicConfig(
+        stream=sys.stdout,
+        format="%(asctime)s | %(message)s [%(levelname)s]",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        level=(logging.DEBUG if VERBOSE else logging.INFO),
+    )
+
+    if logging_config:
+        logging.config.fileConfig(logging_config)
+
+    # We disable the progress bar when using the `logging` module
+
+    def show_progress(*args: List[Any], **kwargs: Dict[Any, Any]) -> None:
+        pass
+
+    # We use the `logging` module for logging
+
+    def log(msg: str) -> None:
+        if msg.startswith("#"):
+            logging.info(msg[1:].lstrip())
+        else:
+            logging.debug(msg.strip())
+
+    # We setup a global exception handler that logs the exception
+
+    def excepthook(exc_type, exc_value, exc_traceback):  # type: ignore
+        # Walk up the stack to the original exception
+        while exc_traceback.tb_next:
+            exc_traceback = exc_traceback.tb_next
+
+        # Nicely log the exception
+        logging.error(f"{exc_value} ({exc_type.__name__} at line {exc_traceback.tb_lineno})")
+
+    sys.excepthook = excepthook
+
+    if logging_config:
+        log(f"Using logging configuration file: {logging_config}")
+    else:
+        log(
+            "Using default logging configuration as no configuration file provided using `--logging_config`"
+        )
+
+
+def load_and_normalise_config(
+    args: Any, config: Optional[Path] = None, other: Optional[List] = None
+) -> dotdict:
+    """Load the configuration file from a toml file and combine with the command line arguments."""
+
+    options = dotdict()
+
+    if config:
+        try:
+            import tomllib as toml
+
+            log(f"Using configuration file: `{config}`")
+
+            with open(config, "rb") as f:
+                opts = toml.load(f)
+                if DEBUG and len(opts) > 0:
+                    log(f"Options from config file: {", ".join([k for k in opts.keys()])}")
+                    options.update(opts)
+
+        except toml.TOMLDecodeError as e:
+            raise RuntimeError(f"Problem loading configuration file `{config}`: {e}")
+
+    # We update the configuration with the command line arguments
+
+    opts = vars(args).copy()
+
+    # We remove the global options that are not relevant for the model science
+
+    for opt in [
+        "config",
+        "logging",
+        "logconfig",
+        "test",
+        "check",
+        "run",
+        "snaphu",
+        "triangle",
+        "nofancy",
+        "quiet",
+        "debug",
+        "processor",
+    ]:
+        if opt in opts:
+            del opts[opt]
+
+    if DEBUG and len(opts) > 0:
+        log(f"Options from command line: {", ".join([k for k in opts.keys()])}")
+
+    options.update(opts)
+
+    # We update the configuration with the other options
+
+    if other:
+        # For pairs of options of the form ['--foo', 'bar'], we add the
+        # key-value pair to the configuration dictionary
+
+        for i in range(0, len(other), 2):
+            key = other[i][2:]
+            value = other[i + 1]
+
+            # Try to parse using various types
+
+            for parse in [int, float, str]:
+                try:
+                    value = parse(value)
+                    break
+                except ValueError:
+                    pass
+
+            options[key] = value
+
+    # If an option is a Path object, resolve it
+
+    for k, v in options.items():
+        if isinstance(v, Path):
+            resolved = v.resolve()
+            if DEBUG and v != resolved:
+                log(f"Resolved path `{v}` to `{resolved}`")
+            options[k] = resolved
+
+    # Print the final options if debug is enabled
+
+    if DEBUG:
+        for k, v in options.items():
+            if isinstance(v, str):
+                vv = f"'{v}'"
+            else:
+                vv = v
+            log(f"Option: {k} = {vv} ({type(v).__name__})")
+
+    return options
 
 
 def cli() -> None:
@@ -6324,13 +6521,18 @@ def cli() -> None:
 
     def parse_stages(s: str) -> list[int]:
         """Parse the stage range argument."""
+        min_stage, max_stage = 0, 7
         ss = s.split("-")
         if ss[0] == "":
             raise ArgumentTypeError("Invalid stage range, it should be of the form 'n' or 'n-m'")
+
         start = int(ss[0])
         end = int(ss[1]) if len(ss) > 1 else start
-        if start < 0 or end > 7:
-            raise ArgumentTypeError("Invalid stage range, it should be between 1 and 7")
+
+        if start < min_stage or end > max_stage:
+            raise ArgumentTypeError(
+                f"Invalid stage, it should be between {min_stage} and {max_stage}"
+            )
         return list(range(start, end + 1))
 
     def parse_exec(p: str) -> Path:
@@ -6342,46 +6544,89 @@ def cli() -> None:
         return Path(p)
 
     parser = ArgumentParser()
+
+    # Global options
+
     parser.add_argument("--nofancy", action="store_true", help="Disable fancy outputs")
     parser.add_argument("--quiet", action="store_true", help="Disable verbose outputs")
+    parser.add_argument("--logging", action="store_true", help="Use the `logging` module")
+    parser.add_argument("--logconfig", type=Path, help="Use `logging` configuration file")
+    parser.add_argument("--config", type=Path, help="Use configuration file (toml format)")
     parser.add_argument("--debug", action="store_true", help="Enable debug outputs")
     parser.add_argument("--test", action="store_true", help="Run the tests")
     parser.add_argument("--check", action="store_true", help="Check against MATLAB outputs")
     parser.add_argument("--triangle", type=parse_exec, default=TRIANGLE, help=f"='{TRIANGLE}'")
     parser.add_argument("--snaphu", type=parse_exec, default=SNAPHU, help=f"='{SNAPHU}'")
+    parser.add_argument("--processor", type=str, default="gamma", help="Processor to use")
     parser.add_argument("run", nargs="*", type=parse_stages, metavar="1 2 3-5")
-    args = parser.parse_args()
 
-    if args.triangle:
-        TRIANGLE = args.triangle
+    # Model options
 
-    if args.snaphu:
-        SNAPHU = args.snaphu
+    parser.add_argument("--master_date", type=str, default="", help="Master date")
+    parser.add_argument("--datadir", type=Path, default=Path(".."), help="Data directory")
+    parser.add_argument("--da_thresh", type=float, default=0.4, help="DA threshold")
+    parser.add_argument("--rg_patches", type=int, default=1, help="Number of range patches")
+    parser.add_argument("--az_patches", type=int, default=1, help="Number of azimuth patches")
+    parser.add_argument("--rg_overlap", type=int, default=50, help="Range overlap")
+    parser.add_argument("--az_overlap", type=int, default=50, help="Azimuth overlap")
+    parser.add_argument("--maskfile", type=Path, help="Mask file")
 
-    if args.nofancy:
-        FANCY_PROGRESS = False
+    try:
+        # Parse the command line but also allow for other options to be passed
+        # that are not defined in the parser but will be passed to the model
 
-    if args.quiet:
-        VERBOSE = False
+        args, other_opts = parser.parse_known_args()
 
-    if args.debug:
-        DEBUG = True
+        if args.triangle:
+            TRIANGLE = args.triangle
 
-    if args.test:
-        run_tests()
+        if args.snaphu:
+            SNAPHU = args.snaphu
 
-    if args.check:
-        check_results()
+        if args.nofancy:
+            FANCY_PROGRESS = False
 
-    if args.run is not None:
-        if len(args.run) == 0:
-            log("Running all stages: 1-7")
-            run_all_stages()
-        else:
-            stages = set(sorted([s for sec in args.run for s in sec]))
-            log(f"Running stages: {', '.join(map(str,stages))}")
-            for stage in stages:
-                run_stage(stage)
+        if not sys.stdout.isatty():
+            FANCY_PROGRESS = False
+
+        if args.quiet:
+            VERBOSE = False
+
+        if args.debug:
+            DEBUG = True
+
+        if args.test:
+            run_tests()
+
+        if args.check:
+            check_results()
+
+        if args.logging:
+            setup_logging(args.logconfig)
+
+        opts = load_and_normalise_config(args, args.config, other_opts)
+
+        if args.run is not None:
+            if len(args.run) == 0:
+                log("Running all stages: 0-7")
+                run_all_stages(opts=opts)
+            else:
+                stages = set(sorted([s for sec in args.run for s in sec]))
+                log(f"Running stages: {', '.join(map(str,stages))}")
+                for stage in stages:
+                    run_stage(stage, opts=opts)
+
+    except (ArgumentTypeError, RuntimeError) as e:
+        log(f"\nError: {e}")
+        sys.exit(1)
+
+    except MemoryError:
+        log("\nMemory Error: try running with more patches or less data.")
+        sys.exit(2)
+
+    except KeyboardInterrupt:
+        log("\nInterrupted! User pressed Ctrl-C")
+        sys.exit(9)
 
 
 if __name__ == "__main__":
