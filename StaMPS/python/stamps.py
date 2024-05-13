@@ -73,7 +73,6 @@ TRIANGLE = "/Users/daleroberts/Work/.envbin/bin/triangle"
 SNAPHU = "/Users/daleroberts/Work/.envbin/bin/snaphu"
 PROCESSOR = "gamma"
 FANCY_PROGRESS = True
-USE_LOGGING = True
 VERBOSE = True
 DEBUG = False
 
