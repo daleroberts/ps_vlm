@@ -3,12 +3,12 @@
 source /g/data/dg9/env
 eval $(workflow_params)
 master=$(ls -1 *.SLC_tab | sort | head -1 | sed -e 's/^\([0-9]\{8\}\).*/\1/')
-mkdir -p ../geo ../rslc ../diff0 ../mlis
+mkdir -p ../geo ../rslc ../diff0
 rm -f ../geo/* ../rslc/* ../diff0/*
 cp ${master}.hgt ../geo/${master}_dem.rdc
-dem_coord dem_WGS84.dem_par ../geo/${master}.lon ../geo/${master}.lat
-cp $workdir/*.rslc $workdir/*.rslc.par ../rslc/
-cp $workdir/*.diff ../diff0/
+dem_coord dem.dem_par ../geo/${master}.lon ../geo/${master}.lat
+cp $cwd/*.rslc $cwd/*.rslc.par ../rslc/
+cp $cwd/*.diff ../diff0/
 for f in $(ls $cwd/../rslc/*.rslc.par | grep -v ${master}); do
   ff=$(basename $f)
   base_orbit $cwd/../rslc/${master}.rslc.par ${f} $cwd/../diff0/${master}_${ff/.rslc.par/.base};
