@@ -8,6 +8,6 @@ echo "master: $master"
 
 source /g/data/dg9/env
 
-mt_prep_gamma ${master} $(cd ..; pwd) 0.4 1 1
+mt_prep_gamma ${master} $(cd ..; pwd) 0.3 1 1
 
-~/aludra/StaMPS/python/stamps.py 1-7
+~/aludra/StaMPS/python/stamps.py 1-6
