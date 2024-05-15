@@ -7,7 +7,7 @@ mkdir -p $workdir
 
 find_obs -passdir $passdir -from ${startdate} -to ${enddate} -bbox $(echo $aoi) -out input_obs.geojson > input_obs
 collect_obs_by_date input_obs --template "{date}.zip_files"
-mosaic_aoi -aoi ${aoi} -must_contain -unique -opods ${opodspath} -pol ${pol} -twd $workdir -template "{date}.{pol}.SLC_tab" *.zip_files
+mosaic_aoi -bbox $(echo $aoi) -must_contain -unique -opods ${opodspath} -pol ${pol} -twd $workdir -template "{date}.{pol}.SLC_tab" *.zip_files
 
 master=$(ls -1 *.SLC_tab | sort | head -1 | sed -e 's/^\([0-9]\{8\}\).*/\1/')
 multi_look_ScanSAR ${master}.${pol}.SLC_tab ${master}.mli ${master}.mli.par $rlks $azlks 1
