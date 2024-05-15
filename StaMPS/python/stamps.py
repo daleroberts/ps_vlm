@@ -61,7 +61,7 @@ from datetime import datetime, timezone, timedelta
 from contextlib import ExitStack, chdir
 from pathlib import Path
 
-from typing import Any, Dict, Tuple, Optional, List, no_type_check
+from typing import TextIO, Any, Dict, Tuple, Optional, List, no_type_check
 from numpy.typing import NDArray as Array
 
 
@@ -69,12 +69,62 @@ np.set_printoptions(precision=4, suppress=True, linewidth=sys.maxsize, threshold
 
 # These constants can be overridden using command-line arguments
 
-TRIANGLE = os.getenv("TRIANGLE", "triangle")
-SNAPHU = os.getenv("SNAPHU", "snaphu")
-PROCESSOR = "gamma"
-FANCY_PROGRESS = True
-VERBOSE = True
-DEBUG = False
+TRIANGLE: str = os.getenv("TRIANGLE", "triangle")
+SNAPHU: str = os.getenv("SNAPHU", "snaphu")
+PROCESSOR: str = "gamma"
+FANCY_PROGRESS: bool = True
+VERBOSE: bool = True
+DEBUG: bool = False
+OPTIONS: Dict[str, Any] = {}
+
+# Default options for the StaMPS configuration file in .toml format
+
+DEFAULT_OPTIONS: str = """
+clap_alpha = 1
+clap_beta = 0.3
+clap_low_pass_wavelength = 800
+clap_win = 32
+density_rand = 20
+drop_ifg_index = []
+filter_grid_size = 50
+filter_weighting = 'P-square'
+gamma_change_convergence = 0.005
+gamma_max_iterations = 3
+gamma_stdev_reject = 0
+lambda = 0.055465759531382094
+max_topo_err = 20
+percent_rand = 20
+ref_centre_lonlat = 0
+ref_lat = -inf
+ref_lon = -inf
+ref_radius = inf
+ref_x = ''
+ref_y = ''
+sb_scla_drop_index = ''
+scla_deramp = 'y'
+scla_drop_index = []
+scla_method = 'L2'
+select_method = 'DENSITY'
+slc_osf = 1
+small_baseline_flag = 'n'
+subtr_tropo = 'n'
+tropo_method = 'a_l'
+unwrap_gold_alpha = 0.8
+unwrap_gold_n_win = 8
+unwrap_grid_size = 200
+unwrap_hold_good_values = 'n'
+unwrap_la_error_flag = 'y'
+unwrap_method = '3D'
+unwrap_patch_phase = 'n'
+unwrap_prefilter_flag = 'y'
+unwrap_spatial_cost_func_flag = 'n'
+unwrap_time_win = 730
+weed_max_noise = inf
+weed_neighbours = 'n'
+weed_standard_dev = 1
+weed_time_win = 730
+weed_zero_elevation = 'n'
+"""
 
 
 class dotdict(dict):
@@ -1370,7 +1420,7 @@ def interp(data: Array[np.floating], r: int, n: int = 4, cutoff: float = 0.5) ->
     return y.ravel()
 
 
-def getparm(parmname: Optional[str] = None, verbose: bool = True) -> str:
+def getparm(parmname: Optional[str] = None, verbose: bool = False) -> str:
     """Retrieves a parameter value from parameter files."""
 
     # TODO: Add support for other file formats (txt?) instead of just .mat
@@ -6346,7 +6396,26 @@ def test_dates() -> None:
     assert (x - y).sum() == 0
 
 
+def test_params() -> None:
+    import tomllib
+
+    fn = Path("test.toml")
+
+    with open(fn, "w") as f:
+        print_all_parameters(f)
+
+    toml = fn.read_text()
+
+    try:
+        tomllib.loads(toml)
+    except tomllib.TOMLDecodeError as e:
+        raise AssertionError(f"Error decoding toml file: {e}")
+    finally:
+        fn.unlink()
+
+
 def run_tests() -> None:
+    test_params()
     test_dates()
     test_interp()
     test_stage1()
@@ -6509,13 +6578,12 @@ def load_and_normalise_config(
     args: Any, config: Optional[Path] = None, other: Optional[List] = None
 ) -> dotdict:
     """Load the configuration file from a toml file and combine with the command line arguments."""
+    import tomllib as toml
 
     options = dotdict()
 
     if config:
         try:
-            import tomllib as toml
-
             log(f"Using configuration file: `{config}`")
 
             with open(config, "rb") as f:
@@ -6526,6 +6594,13 @@ def load_and_normalise_config(
 
         except toml.TOMLDecodeError as e:
             raise RuntimeError(f"Problem loading configuration file `{config}`: {e}")
+
+    else:
+        # Parse the default options from DEFAULT_OPTIONS
+        opts = toml.loads(DEFAULT_OPTIONS)
+        if DEBUG and len(opts) > 0:
+            log(f"Options from default options: {", ".join([k for k in opts.keys()])}")
+            options.update(opts)
 
     # We update the configuration with the command line arguments
 
@@ -6546,6 +6621,7 @@ def load_and_normalise_config(
         "quiet",
         "debug",
         "processor",
+        "params",
     ]:
         if opt in opts:
             del opts[opt]
@@ -6598,12 +6674,82 @@ def load_and_normalise_config(
     return options
 
 
+def print_all_parameters(file: TextIO = sys.stdout) -> None:
+    """Print all the model parameters."""
+
+    def get_and_print(p: str) -> None:
+        v = getparm(p)
+
+        if v.startswith("[") and v.endswith("]"):
+            a = np.fromstring(v[1:-1], sep=",")
+            print(f"{p} = {a}", file=file)
+            return
+
+        for parse in [int, float, str]:
+            try:
+                v = parse(v)
+                break
+            except ValueError:
+                pass
+
+        if isinstance(v, str):
+            v = f"'{v}'"
+
+        print(f"{p} = {v}", file=file)
+
+    get_and_print("clap_alpha")
+    get_and_print("clap_beta")
+    get_and_print("clap_low_pass_wavelength")
+    get_and_print("clap_win")
+    get_and_print("density_rand")
+    get_and_print("drop_ifg_index")
+    get_and_print("filter_grid_size")
+    get_and_print("filter_weighting")
+    get_and_print("gamma_change_convergence")
+    get_and_print("gamma_max_iterations")
+    get_and_print("gamma_stdev_reject")
+    get_and_print("lambda")
+    get_and_print("max_topo_err")
+    get_and_print("percent_rand")
+    get_and_print("ref_centre_lonlat")
+    get_and_print("ref_lat")
+    get_and_print("ref_lon")
+    get_and_print("ref_radius")
+    get_and_print("ref_x")
+    get_and_print("ref_y")
+    get_and_print("sb_scla_drop_index")
+    get_and_print("scla_deramp")
+    get_and_print("scla_drop_index")
+    get_and_print("scla_method")
+    get_and_print("select_method")
+    get_and_print("slc_osf")
+    get_and_print("small_baseline_flag")
+    get_and_print("subtr_tropo")
+    get_and_print("tropo_method")
+    get_and_print("unwrap_gold_alpha")
+    get_and_print("unwrap_gold_n_win")
+    get_and_print("unwrap_grid_size")
+    get_and_print("unwrap_hold_good_values")
+    get_and_print("unwrap_la_error_flag")
+    get_and_print("unwrap_method")
+    get_and_print("unwrap_patch_phase")
+    get_and_print("unwrap_prefilter_flag")
+    get_and_print("unwrap_spatial_cost_func_flag")
+    get_and_print("unwrap_time_win")
+    get_and_print("weed_max_noise")
+    get_and_print("weed_neighbours")
+    get_and_print("weed_standard_dev")
+    get_and_print("weed_time_win")
+    get_and_print("weed_zero_elevation")
+
+
 def cli() -> None:
     """Command line interface."""
 
     global FANCY_PROGRESS
     global TRIANGLE
     global SNAPHU
+    global OPTIONS
     global VERBOSE
     global DEBUG
 
@@ -6652,6 +6798,7 @@ def cli() -> None:
     parser.add_argument("--snaphu", type=parse_exec, default=SNAPHU, help="Snaphu executable")
     parser.add_argument("--processor", type=str, default="gamma", help="Processor to use")
     parser.add_argument("--maxmem", type=str, default="-1B", help="Maximum memory usage")
+    parser.add_argument("--params", action="store_true", help="Print all parameters")
     parser.add_argument("run", nargs="*", type=parse_stages, metavar="1 2 3-5")
 
     # Model options
@@ -6672,6 +6819,10 @@ def cli() -> None:
         # that are not defined in the parser but will be passed to the model
 
         args, other_opts = parser.parse_known_args()
+
+        if args.params:
+            print_all_parameters()
+            sys.exit(0)
 
         if args.maxmem:
             limit_memory(args.maxmem)
@@ -6705,6 +6856,10 @@ def cli() -> None:
             setup_logging(args.logconfig)
 
         opts = load_and_normalise_config(args, args.config, other_opts)
+
+        # Set the global options
+
+        OPTIONS = opts
 
     except ArgumentTypeError as e:
         log(f"\nError: {e}")
