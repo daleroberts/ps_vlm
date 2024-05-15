@@ -1423,7 +1423,10 @@ def interp(data: Array[np.floating], r: int, n: int = 4, cutoff: float = 0.5) ->
 def getparm(parmname: Optional[str] = None, verbose: bool = False) -> str:
     """Retrieves a parameter value from parameter files."""
 
-    # TODO: Add support for other file formats (txt?) instead of just .mat
+    if parmname in OPTIONS:
+        return str(OPTIONS[parmname])
+
+    # TODO: Remove the following old code:
 
     def pprint(k: str, v: Any) -> None:
         if isinstance(v, str):
