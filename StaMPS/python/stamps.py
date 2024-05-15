@@ -345,7 +345,10 @@ class PrepareData:
         # Generate the `selpsc.in` file, this is later used by the
         # `select_candidate_pixels` method
 
-        selfile = self.workdir / "selpsc.in"
+        selfile = Path(self.workdir / "selpsc.in").resolve()
+
+        selfile.unlink(missing_ok=True)
+
         self.write_param_to_file(self.da_thresh, selfile)
         self.write_param_to_file(self.width, selfile)
         self.write_param_to_file(f"{self.workdir}/calamp.out", selfile)
@@ -621,13 +624,22 @@ class PrepareData:
         width = 0
         fns = []
 
+        log(f"Reading threshold, width, and calampfn from `{selpscfn.resolve()}`")
+
         with open(selpscfn) as fd:
             D_thresh = float(fd.readline())
             width = int(fd.readline())
+            calampfn = Path(fd.readline().strip())
+
+        log(f"Reading calibration factors from calampfn=`{calampfn.resolve()}`")
+
+        with open(calampfn) as fd:
             for line in fd:
                 c1, c2 = line.split()
                 fns.append(Path(c1))
                 calib_factor.append(float(c2))
+
+        log(f"Reading patch parameters from `{patchfn.resolve()}`")
 
         with open(patchfn) as fd:
             rg_start = int(fd.readline())
@@ -671,6 +683,8 @@ class PrepareData:
                     az, rg = [int(x) - 1 for x in line.strip().split()]
                     inazrg.setdefault(az, []).append(rg)
 
+        log(f"Calibrating amplitude and calculating dispersions across {nfiles} files")
+
         with ExitStack() as stack:
             pfd = stack.enter_context(open(posfn, "w"))
             mfd = stack.enter_context(open(meanampfn, "w"))
@@ -699,7 +713,9 @@ class PrepareData:
 
                 sumamp = np.nansum(amp, axis=0)
                 sumampsq = np.nansum(amp**2, axis=0)
-                D_sq = nfiles * sumampsq / (sumamp * sumamp) - 1  # var / mean^2
+
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    D_sq = nfiles * sumampsq / (sumamp * sumamp) - 1  # var / mean^2
 
                 D_sq[mask] = np.nan
 
@@ -707,14 +723,12 @@ class PrepareData:
 
                 if az in inazrg:
                     frgs = inazrg[az]
-                    log(f"at azimuth: {az}, adding fixed ranges: {frgs}")
                     rgloc.extend(frgs)
 
                 pos = np.zeros_like(D_sq, dtype=np.ubyte)
                 pos[rgloc] = 1
 
-                if az % 100 == 0:
-                    log(f"line {az} / {nlines}  {np.nanmedian(D_sq):.4f} {len(rgloc)}")
+                show_progress(az, nlines)
 
                 for rg in rgloc:
                     if rg_start <= rg <= rg_end:
@@ -740,15 +754,29 @@ class PrepareData:
         """Extract the longitude and latitude of the candidate pixels. This is roughly
         equivalent to the `psclonlat` program."""
 
-        log("Extracting lon/lat pairs corresponding to the candidate pixels")
+        #TODO: This is not a full implementation of the bash script `psclonlat`
+
+        log(f"Reading lon/lat parameters from `{lonlatfn.resolve()}`")
 
         with open(lonlatfn, "r") as f:
             width = int(f.readline().strip())
             lonfn = f.readline().strip()
             latfn = f.readline().strip()
 
+        log(f"{width = }")
+        log(f"{lonfn = }")
+        log(f"{latfn = }")
+
+        log(f"Reading longitudes from `{lonfn}`")
+
         lon = np.fromfile(lonfn, dtype=np.float32).reshape((-1, width))
+
+        log(f"Reading latitudes from `{latfn}`")
+
         lat = np.fromfile(latfn, dtype=np.float32).reshape((-1, width))
+
+        log(f"Reading ij parameters from `{ijfn.resolve()}`")
+
         psc_ids = np.loadtxt(ijfn, delimiter=" ", usecols=(0, 1, 2), dtype=int)
 
         lon_out = lon[psc_ids[:, 1], psc_ids[:, 2]]
@@ -853,7 +881,7 @@ class GammaPrepareData(PrepareData):
         raise NotImplementedError
 
     def run(self) -> None:
-        pass
+        self.identify_candidates()
 
 
 class DorisPrepareData(PrepareData):
@@ -1425,6 +1453,8 @@ def getparm(parmname: Optional[str] = None, verbose: bool = False) -> str:
 
     if parmname in OPTIONS:
         return str(OPTIONS[parmname])
+    else:
+        log(f"Parameter {parmname} not found in OPTIONS")
 
     # TODO: Remove the following old code:
 
@@ -1482,7 +1512,12 @@ def getparm(parmname: Optional[str] = None, verbose: bool = False) -> str:
 
 def setparm(parmname: str, value: Any) -> None:
     """Sets a parameter value in the local parameters file."""
-    # FIXME: Save to new format
+
+    OPTIONS[parmname] = value
+
+    return
+
+    # FIXME: Write to disk as toml?
 
     import scipy.io as sio
 
@@ -1985,8 +2020,11 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
 
     log(f"{rslcpar = }")
 
+    log(f"Reading inteferogram dates from `{pscname.resolve()}`")
+
     # Read interferogram dates
     with pscname.open() as f:
+        f.readline()  # skip first line
         ifgs = sorted([Path(line.strip()) for line in f.readlines()])
 
     print(f"{ifgs = } {len(ifgs) = }")
@@ -2037,7 +2075,7 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
 
     # Processing of the id, azimuth, range data
     with ijname.open("rb") as f:
-        ij = np.loadtxt(f, dtype=np.uint16)
+        ij = np.loadtxt(f, converters=int).astype(np.uint16)
 
     stamps_save("ij", ij)
 
@@ -6601,9 +6639,9 @@ def load_and_normalise_config(
     else:
         # Parse the default options from DEFAULT_OPTIONS
         opts = toml.loads(DEFAULT_OPTIONS)
-        if DEBUG and len(opts) > 0:
+        if DEBUG:
             log(f"Options from default options: {", ".join([k for k in opts.keys()])}")
-            options.update(opts)
+        options.update(opts)
 
     # We update the configuration with the command line arguments
 
