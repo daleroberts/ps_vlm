@@ -1,0 +1,13 @@
+#!bash
+#PBS -P dg9 -q normal -l walltime=48:00:00,mem=180GB,ncpus=48,jobfs=400GB -l wd
+#PBS -l storage=scratch/dg9+gdata/v10+gdata/dg9+gdata/up71+gdata/fj7
+set -e
+
+master=$(ls -1 ../diff0 | head -1 | sed -e 's/\_.*//g')
+echo "master: $master"
+
+source /g/data/dg9/env
+
+mt_prep_gamma ${master} $(cd ..; pwd) 0.4 1 1
+
+~/aludra/StaMPS/python/stamps.py 1-7
