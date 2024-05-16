@@ -1,4 +1,4 @@
-#!bash
+#!/usr/bin/env bash
 #PBS -P dg9 -q normal -l walltime=48:00:00,mem=180GB,ncpus=48,jobfs=400GB -l wd
 #PBS -l storage=scratch/dg9+gdata/v10+gdata/dg9+gdata/up71+gdata/fj7
 set -e
