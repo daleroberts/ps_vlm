@@ -2,9 +2,9 @@
 
 In other words, this code takes a time series of SAR observations and estimates the vertical land motion by considering differences of phase between pairs of SAR observations. It only does this at locations across the landscape that are considered stable, or persistent, over time.
 
-<img src="https://github.com/daleroberts/ps_vlm/raw/master/docs/cover.png" width="800">
+<img src="https://github.com/daleroberts/ps_vlm/blob/8950c9cedd7af6a360dd6c3176b950aa8fe1039b/docs/cover.png" width="800">
 
-# Overview
+## Overview
 
 This self-contained codebase provides:
 
