@@ -36,3 +36,85 @@ The methodology consists of the following stages:
   - Stage 6: Unwrapping the phase
   - Stage 7: Spatial filtering of the unwrapped phase
 
+
+## Installation
+
+
+## Usage
+
+The code can be run from the command line using the `psvlm.py` script. By default, the code will run all the stages from 0 to 7. Alternatively, the code can be run for a specific stage by specifying the stage number. For example, to run stage 0, then stages 3-5, the following command can be used:
+```
+./psvlm.py 0 3-5
+```
+This allows the user to run the code in a step-by-step manner and inspect the output at each stage, or to re-run various stages, or to restart the code from a specific stage.
+
+### Output messages
+
+By default the code is verbose and will output messages to the console. Output can be disabled using the following option:
+
+- `-q`, `--quiet`: Disable verbose outputs
+
+In certain stages of processing, the code displays progress bars when processing is run in interactive mode. When not run in interactive mode, for example when the output is piped to a file, the progress bars are switch to a more simple style. The more simple style of progress bar can also be switched off using the following option:
+
+- `--nofancy`: Disable fancy outputs
+
+### Logging
+
+- `--logging`: Use the `logging` module
+- `--logconfig LOGCONFIG`: Use `logging` configuration file
+
+
+### Configuration
+
+- `-c CONFIG`, `--config CONFIG`: Configuration file in .toml format
+- `--params`: Print all parameters
+
+### Debugging
+
+- `-d`, `--debug`: Enable debug outputs
+
+### Testing
+
+- `--test`: Run the tests
+
+### Processor option
+
+- `--processor PROCESSOR`: Processor to use
+
+### Location of dependency executables
+
+- `--triangle TRIANGLE`: Triangle executable
+- `--snaphu SNAPHU`: Snaphu executable
+
+
+### Limiting the maximum memory usage
+
+- `--maxmem MAXMEM`: Maximum memory usage
+
+### Setting the master date
+
+- `--master_date YYYYMMDD`: Master date
+
+### Setting the data directory
+
+- `--datadir DATADIR`: Data directory
+
+### Threshold for persistent scatterers
+
+- `--da_thresh DA_THRESH`: DA threshold
+
+### Range and azimuth patches
+
+- `--rg_patches RG_PATCHES`: Number of range patches
+- `--az_patches AZ_PATCHES`: Number of azimuth patches
+- `--rg_overlap RG_OVERLAP`: Range overlap
+- `--az_overlap AZ_OVERLAP`: Azimuth overlap
+
+### Mask file
+
+- `--maskfile MASKFILE`: Mask file
+
+### Check against MATLAB outputs
+
+- `--check`: Check against MATLAB outputs
+
