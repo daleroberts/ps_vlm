@@ -154,3 +154,14 @@ We refer the reader to the `logging` module documentation for more information o
 
 - `--check`: Check against MATLAB outputs
 
+
+## Citations
+
+If you use this code in your research, please cite the following:
+
+ - ecat record
+
+ - Hooper A; Bekaert D; Spaans K; Arikan M (2012), Recent advances in SAR
+   interferometry time series analysis for measuring crustal deformation,
+   Tectonophysics, 514-517, pp.1-13. doi: 10.1016/j.tecto.2011.10.013.
+
