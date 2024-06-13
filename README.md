@@ -54,15 +54,51 @@ By default the code is verbose and will output messages to the console. Output c
 
 - `-q`, `--quiet`: Disable verbose outputs
 
-In certain stages of processing, the code displays progress bars when processing is run in interactive mode. When not run in interactive mode, for example when the output is piped to a file, the progress bars are switch to a more simple style. The more simple style of progress bar can also be switched off using the following option:
+In certain stages of processing, the code displays "fancy" progress bars when processing is run in interactive mode. When not run in interactive mode, for example when the output is piped to a file, the progress bars are switch to a more simple style. The more simple style of progress bar can also be switched on using the following option:
 
 - `--nofancy`: Disable fancy outputs
 
+If you would like more control over the program output, please see the logging section below.
+
+
 ### Logging
 
+By default, the code simply outputs messages to stdout in a simple manner. If you would instead like to use the `logging` module, this can be enabled using the following option:
+
 - `--logging`: Use the `logging` module
+
+A logging configuration file can be specified using the following option:
+
 - `--logconfig LOGCONFIG`: Use `logging` configuration file
 
+For example, the following configuration file can be used to log messages to a file:
+
+```
+[loggers]
+keys=root
+
+[handlers]
+keys=file
+
+[formatters]
+keys=formatter
+
+[logger_root]
+level=DEBUG
+handlers=file
+
+[handler_file]
+class=FileHandler
+level=DEBUG
+formatter=formatter
+args=('psvlm.log',)
+filename=psvlm.log
+
+[formatter_formatter]
+format=%(asctime)s - %(name)s - %(levelname)s - %(message)s
+```
+
+We refer the reader to the `logging` module documentation for more information on how to configure logging.
 
 ### Configuration
 
