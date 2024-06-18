@@ -1,4 +1,5 @@
 #!/usr/bin/env python3.12
+
 """
 This is a Python implementation of:
 
@@ -781,8 +782,6 @@ class PrepareData:
         """Extract the longitude and latitude of the candidate pixels. This is roughly
         equivalent to the `psclonlat` program."""
 
-        # TODO: This is not a full implementation of the bash script `psclonlat`
-
         log(f"Reading lon/lat parameters from `{lonlatfn.resolve()}`")
 
         with open(lonlatfn, "r") as f:
@@ -1183,8 +1182,8 @@ def check(
     """A debug function to check if the results match the results that have
     been saved in MATLAB."""
 
-    # Disable this function if not in debug mode
     if not DEBUG:
+        # Disable this function if not in debug mode
         return
 
     if isinstance(x, dict):
@@ -1374,17 +1373,21 @@ def llh2local(llh: Array, origin: Array) -> Array:
     """
 
     # Set ellipsoid constants (WGS84)
+
     a = 6378137.0  # semi-major axis
     e = 0.08209443794970  # eccentricity
 
     # Convert to radians
+
     llh = np.deg2rad(llh)
     origin = np.deg2rad(origin)
 
     # Initialize xy array
+
     xy = np.zeros((2, llh.shape[1]))
 
     # Do the projection
+
     z = llh[1, :] != 0
     dlambda = llh[0, z] - origin[0]
 
@@ -1413,11 +1416,13 @@ def llh2local(llh: Array, origin: Array) -> Array:
     xy[1, z] = M - M0 + N / np.tan(llh[1, z]) * (1 - np.cos(E))
 
     # Handle special case of latitude = 0
+
     dlambda = llh[0, ~z] - origin[0]
     xy[0, ~z] = a * dlambda
     xy[1, ~z] = -M0
 
     # Convert to km
+
     xy = xy / 1000
 
     return xy
@@ -1425,9 +1430,12 @@ def llh2local(llh: Array, origin: Array) -> Array:
 
 def gausswin(n: int, alpha: float = 2.5) -> Array[np.float64]:
     """Create a Gaussian window of length `n` with standard deviation `alpha`."""
+
+    # Alternative implementation:
     # n = np.arange(0, N) - (N - 1) / 2
     # w = np.array(np.exp(-(1 / 2) * (alpha * n / ((N - 1) / 2)) ** 2), dtype=np.float64)
     # return w
+
     std = (n - 1) / (2 * alpha)
     return np.array(gaussian(n, std), dtype=np.float64)
 
@@ -1449,9 +1457,11 @@ def interp(
 
     def design(r: int, n: int, alpha: float) -> Array[np.float64]:
         """Design a lowpass filter using the Parks-McClellan algorithm."""
+
         if alpha == 1:
             M = np.array([r] * 2 + [0] * 2)
             F = np.array([0, 1 / (2 * r), 1 / (2 * r), 0.5])
+
         else:
             nband = int(np.floor(0.5 * r))
             M = np.array([r] * 2 + [0.0] * (2 * nband))
@@ -1462,6 +1472,7 @@ def interp(
             F[2::2] = k / r - a2r
             F[3::2] = k / r + a2r
             F[-1] = min(F[-1], 0.5)
+
         return np.array(firls(2 * r * n + 1, 2 * F, M), dtype=np.float64)
 
     # Design the lowpass filter
@@ -1561,11 +1572,14 @@ def setparm(parmname: str, value: Any) -> None:
     import scipy.io as sio
 
     parmfile = Path("parms.mat").absolute()
+
     if parmfile.exists():
         parms = loadmat(str(parmfile))
+
     elif (parmfile.parent.parent / parmfile.name).exists():
         parmfile = parmfile.parent.parent / parmfile.name
         parms = loadmat(str(parmfile))
+
     else:
         raise FileNotFoundError(f"`{parmfile}` not found")
 
@@ -1617,17 +1631,22 @@ def patchdirs() -> List[Path]:
     dirs = []
 
     patchlist = Path("patch.list")
+
     if patchlist.exists():
         log(f"Reading directory names from `{patchlist}`")
+
         with patchlist.open("r") as f:
             dirs = [Path(line.strip()).resolve() for line in f.readlines()]
             log(f"Found {len(dirs)} directories in `patch.list`: {dirs}")
+
     else:
         # if patch.list does not exist, find all directories with PATCH_ in the name
+
         dirs = [d for d in Path(".").iterdir() if d.is_dir() and "PATCH_" in d.name]
 
     if len(dirs) == 0:
         # patch directories not found, use current directory
+
         dirs.append(Path("."))
 
     return dirs
@@ -1646,7 +1665,10 @@ def clap_filter(
     """
 
     # To be safe, make a copy of the input phase array
+
     ph = ph_in.copy()
+
+    # If low_pass is not provided, create an array of zeros
 
     if low_pass is None:
         low_pass = np.zeros((n_win + n_pad, n_win + n_pad))
@@ -1654,15 +1676,17 @@ def clap_filter(
     ph_out = np.zeros_like(ph, dtype=ph.dtype)
     n_i, n_j = ph.shape
 
+    # Calculate the number of increments
+
     n_inc = n_win // 4
     n_win_i = -(-n_i // n_inc) - 3  # Ceiling division
     n_win_j = -(-n_j // n_inc) - 3
 
     # Create a window function
+
     x = np.arange(n_win // 2)
-    wind_func = np.pad(
-        np.add.outer(x, x), ((0, n_win // 2), (0, n_win // 2)), mode="symmetric"
-    )
+    pad = n_win // 2
+    wf = np.pad(np.add.outer(x, x), ((0, pad), (0, pad)), mode="symmetric")
 
     def adjust_window(wf: Array, shift: int, axis: int) -> Array:
         if axis == 0:  # Adjust rows
@@ -1672,9 +1696,11 @@ def clap_filter(
         return wf
 
     # Replace NaNs with zeros
+
     ph = np.nan_to_num(ph)
 
     # Gaussian smoothing kernel
+
     B = np.outer(gausswin(7, 2.5), gausswin(7, 2.5))
 
     ph_bit = np.zeros((n_win + n_pad, n_win + n_pad), dtype=ph.dtype)
@@ -1682,9 +1708,10 @@ def clap_filter(
     for ix1 in range(n_win_i):
         i1 = ix1 * n_inc
         i2 = min(i1 + n_win, n_i + 1)
-        wf = wind_func.copy()
+        wf = wf.copy()
 
         # Adjust the window function for the edge cases
+
         if i2 > n_i:
             i_shift = i2 - n_i
             i2 = n_i
@@ -1697,6 +1724,7 @@ def clap_filter(
             wf2 = wf.copy()
 
             # Adjust the window function for the edge cases
+
             if j2 > n_j:
                 j_shift = j2 - n_j
                 j2 = n_j
@@ -1709,10 +1737,13 @@ def clap_filter(
             ph_bit[: i2 - i1, : j2 - j1] = ph[i1:i2, j1:j2]
 
             # Smooth the magnitude response
+
             ph_fft = np.fft.fft2(ph_bit)
             H = np.abs(ph_fft)
 
             H = ifftshift(convolve2d(fftshift(H), B, mode="same"))
+
+            # Normalize and apply power law
 
             medianH = np.median(H)
 
@@ -1723,7 +1754,11 @@ def clap_filter(
             H = H - 1
             H[H < 0] = 0
 
+            # Combine with low_pass using adaptive factor
+
             G = H * beta + low_pass
+
+            # Apply the adaptive filter in the frequency domain
 
             ph_filt = np.fft.ifft2(ph_fft * G)
 
@@ -1745,15 +1780,20 @@ def clap_filter_patch(
     """
 
     # To be safe, make a copy of the input phase array
+
     ph = ph_in.copy()
+
+    # If low_pass is not provided, create an array of zeros
 
     if low_pass is None:
         low_pass = np.zeros_like(ph)
 
     # Replace NaNs with 0
+
     ph = np.nan_to_num(ph)
 
     # Create Gaussian window
+
     wl = 7  # Window length
     wf = 2.5  # Width factor
     std = (wl - 1) / (2 * wf)
@@ -1761,13 +1801,16 @@ def clap_filter_patch(
     B = np.outer(gauss_win, gauss_win)
 
     # Compute FFT of the patch
+
     ph_fft = np.fft.fft2(ph)
 
     # Compute magnitude response and smooth it
+
     H = np.abs(ph_fft)
     H = fftshift(fftconvolve(ifftshift(H), B, mode="same"))
 
     # Normalize and apply power law
+
     medianH = np.median(H)
     if medianH == 0:
         medianH = 1
@@ -1776,9 +1819,11 @@ def clap_filter_patch(
     H[H < 0] = 0
 
     # Combine with low_pass using adaptive factor
+
     G = H * beta + low_pass
 
     # Inverse FFT to get filtered patch
+
     ph_out = np.fft.ifft2(ph_fft * G)
 
     return ph_out
@@ -1793,18 +1838,22 @@ def goldstein_filter(
     """Goldstein's adaptive phase filtering applied to a phase image."""
 
     # Make a copy of the input phase array
+
     ph = ph_in.copy()
 
     if n_pad is None:
         n_pad = int(round(n_win * 0.25))
 
     # Create the Gaussian smoothing kernel
+
     gauss_kernel = np.outer(gaussian(7, 7 / 3), gaussian(7, 7 / 3))
 
     # Initialize the output phase array
+
     ph_out = np.zeros_like(ph)
 
     # Replace NaNs with zeros
+
     ph = np.nan_to_num(ph)
 
     # Compute increments and the number of windows
@@ -2138,36 +2187,50 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
 
     n_ps = len(ij)
 
+    log(f"Loaded {n_ps} pixel locations from `{ijname.resolve()}`")
+
     # Processing of the longitude and latitude data
     with llname.open("rb") as f:
         lonlat = np.fromfile(f, dtype=">f4").reshape((-1, 2)).astype(np.float64)
+
+    log(f"Loaded {lonlat.shape[0]} lon/lat data from `{llname.resolve()}`")
 
     # Processing of the Height data
     if hgtname.exists():
         with hgtname.open("rb") as f:
             hgt = np.fromfile(f, dtype=np.float64)
+
+        log(f"Loaded {hgt.shape[0]} height data from `{hgtname.resolve()}`")
     else:
         log(f"{hgtname} does not exist, proceeding without height data.")
 
     # Calculate range
+
     rg = rgn + ij[:, 2] * rps
 
     # Calculate satellite look angles
+
     look = np.arccos((se**2 + rg**2 - re**2) / (2 * se * rg))
 
     # Initialize the perpendicular baseline matrix
+
     bperp_mat = np.zeros((n_ps, n_ifg))
     for i in range(n_ifg):
         basename = ifgs[i].with_suffix(".base")
+
         B_TCN = np.array(
             [float(x) for x in read_params(basename, "initial_baseline(TCN)", 3)]
         )
+
         BR_TCN = np.array(
             [float(x) for x in read_params(basename, "initial_baseline_rate", 3)]
         )
+
         bc = B_TCN[1] + BR_TCN[1] * (ij[:, 1] - mean_az) / prf
         bn = B_TCN[2] + BR_TCN[2] * (ij[:, 1] - mean_az) / prf
+
         # Convert baselines from (T)CN to perpendicular-parallel coordinates
+
         bperp_mat[:, i] = bc * np.cos(look) - bn * np.sin(look)
 
     # Calculate mean perpendicular baselines
@@ -2194,7 +2257,7 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
         except ValueError:
             f_n_ifg, f_n_ps = filedim(phname, n_ps, ">c8")
             raise RuntimeError(
-                f"Wrong dimensions for `{phname}`. File shape {f_n_ps}x{f_n_ifg} and expected is {n_ps}x{n_ifg}"
+                f"Wrong dims for `{phname}`, got {f_n_ps}x{f_n_ifg} but expected {n_ps}x{n_ifg}"
             )
 
     # Calculate mean phases
@@ -2214,18 +2277,22 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     log(f"{bperp.shape = }")
 
     # Find center longitude and latitude
+
     ll0 = (np.max(lonlat, axis=0) + np.min(lonlat, axis=0)) / 2
 
     log(f"{ll0 = } (center longitude and latitude in degrees)")
 
     # Convert to local coordinates and scale to meters
+
     xy = llh2local(lonlat.T, ll0).T * 1000
 
     # Sort coordinates by x and y
+
     sort_x = xy[np.argsort(xy[:, 0])]
     sort_y = xy[np.argsort(xy[:, 1])]
 
     # Determine corners based on a small percentage of points
+
     n_pc = int(np.round(n_ps * 0.001))
     bl = np.mean(sort_x[:n_pc], axis=0)  # bottom left
     tr = np.mean(sort_x[-n_pc:], axis=0)  # top right
@@ -2235,6 +2302,7 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     log(f"{bl = }\n{tl = }\n{br = }\n{tr = } (patch corners in meters)")
 
     # Calculate rotation angle
+
     theta = (180 - heading) * np.pi / 180
     if theta > np.pi:
         theta -= 2 * np.pi
@@ -2242,30 +2310,33 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     log(f"{theta = } (rotation angle in radians)")
 
     # Rotation matrix
+
     rotm = np.array([[np.cos(theta), np.sin(theta)], [-np.sin(theta), np.cos(theta)]])
 
     log("Rotation matrix:")
-    np.savetxt(sys.stderr, rotm, fmt="%.2f", delimiter=" ")
+    np.savetxt(sys.stdout, rotm, fmt="%.2f", delimiter=" ")
 
     # Rotate coordinates
+
     xy = xy.T
     xynew = rotm @ xy
 
     # Check if rotation improves alignment and apply if it does
+
     if (np.max(xynew[0]) - np.min(xynew[0]) < np.max(xy[0]) - np.min(xy[0])) and (
         np.max(xynew[1]) - np.min(xynew[1]) < np.max(xy[1]) - np.min(xy[1])
     ):
-        log(
-            f"Rotation improved alignment, applying rotation {theta * 180 / np.pi:.2f}°"
-        )
+        log(f"Rotation improved alignment, rotating by {theta * 180 / np.pi:.2f}°")
         xy = xynew.T
 
     # Sort local coords `xy` in ascending y, then x order
+
     sort_ix = np.lexsort((xy[:, 0], xy[:, 1]))
 
     stamps_save("sort_ix", sort_ix)
 
     # Sort all data based on the sorted indices
+
     xy = xy[sort_ix]
     ph = ph[sort_ix]
     lonlat = lonlat[sort_ix]
