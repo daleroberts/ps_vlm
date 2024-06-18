@@ -65,7 +65,9 @@ from typing import TextIO, Any, Dict, Tuple, Optional, List, no_type_check
 from numpy.typing import NDArray as Array
 
 
-np.set_printoptions(precision=4, suppress=True, linewidth=sys.maxsize, threshold=sys.maxsize)
+np.set_printoptions(
+    precision=4, suppress=True, linewidth=sys.maxsize, threshold=sys.maxsize
+)
 
 # These constants can be overridden using command-line arguments
 
@@ -223,8 +225,12 @@ class PrepareData:
 
         # Find the RSC file
 
-        self.rscfile = next((self.datadir / self.slcdir).glob(f"{self.master_date}.*slc.par"), None)
-        assert self.rscfile is not None, f"RSC file not found in {self.datadir / self.slcdir}"
+        self.rscfile = next(
+            (self.datadir / self.slcdir).glob(f"{self.master_date}.*slc.par"), None
+        )
+        assert (
+            self.rscfile is not None
+        ), f"RSC file not found in {self.datadir / self.slcdir}"
         self.rscfile = self.rscfile.resolve()  # get the full path
 
         self.width, self.length, self.precision = self.parse_rsc_file(self.rscfile)
@@ -246,7 +252,9 @@ class PrepareData:
         # Generate the dem configuration files. This configuration file is used by
         # the `extract_lonlats`, `extract_heights`, and `extract_phases` methods.
 
-        self.generate_dem_config_file(self.workdir / "pscdem.in", self.workdir / "psclonlat.in")
+        self.generate_dem_config_file(
+            self.workdir / "pscdem.in", self.workdir / "psclonlat.in"
+        )
 
         # Generate the patch configuration files. These are used by the `select_candidate_pixels`
         # method to extract the candidate pixels from the SLC data.
@@ -260,7 +268,9 @@ class PrepareData:
         log(f"Found {len(slcs)} SLCs to process in {self.datadir / self.slcdir}")
 
         if len(slcs) == 0:
-            raise FileNotFoundError(f"No SLC files found in {self.datadir / self.slcdir}")
+            raise FileNotFoundError(
+                f"No SLC files found in {self.datadir / self.slcdir}"
+            )
 
         # Calibrate the amplitude of the SLC data
 
@@ -486,7 +496,9 @@ class PrepareData:
                     f"master_heading: {master_heading:9.6f} - skipping"
                 )
             else:
-                log(f"{fn} heading: {heading:9.6f} master_heading: {master_heading:9.6f}")
+                log(
+                    f"{fn} heading: {heading:9.6f} master_heading: {master_heading:9.6f}"
+                )
                 fns2.append(fn)
 
         log(f"Before: {len(fns)} obs After: {len(fns2)} obs")
@@ -520,10 +532,14 @@ class PrepareData:
         mu = np.nanmean(mean_amps)
         sd = np.nanstd(mean_amps)
 
-        log(f"Files with mean_amp outside 2 sigma: {mu:.4f} +/- {sd:.4f} are flagged with a '*'")
+        log(
+            f"Files with mean_amp outside 2 sigma: {mu:.4f} +/- {sd:.4f} are flagged with a '*'"
+        )
         for i, fn in enumerate(fns):
             star = " " if np.abs(mean_amps[i] - mu) < 2 * sd else "*"
-            print(f"{fn} mean_amp: {mean_amps[i]:+8.4f} sd_amp: {sd_amps[i]:+8.4f} {star}")
+            print(
+                f"{fn} mean_amp: {mean_amps[i]:+8.4f} sd_amp: {sd_amps[i]:+8.4f} {star}"
+            )
 
     def generate_diff_config_files(
         self, master_date: str, calampfn: Path, pscphasefn: Path
@@ -539,7 +555,11 @@ class PrepareData:
                 fn = Path(line.strip().split()[0])
                 stem = fn.stem
                 if master_date not in stem:
-                    difffn = fn.parent.parent / "diff0" / Path(f"{master_date}_{fn.stem}.diff")
+                    difffn = (
+                        fn.parent.parent
+                        / "diff0"
+                        / Path(f"{master_date}_{fn.stem}.diff")
+                    )
                     fo.write(f"{difffn}\n")
 
     def identify_candidates(
@@ -694,7 +714,9 @@ class PrepareData:
             slcfds = [stack.enter_context(open(f)) for f in fns]
 
             for az in range(nlines):
-                arr = np.array([np.fromfile(fd, dtype=ts, count=width) for fd in slcfds], dtype=ts)
+                arr = np.array(
+                    [np.fromfile(fd, dtype=ts, count=width) for fd in slcfds], dtype=ts
+                )
 
                 if not (az_start <= az <= az_end):
                     nskip += 1
@@ -754,7 +776,7 @@ class PrepareData:
         """Extract the longitude and latitude of the candidate pixels. This is roughly
         equivalent to the `psclonlat` program."""
 
-        #TODO: This is not a full implementation of the bash script `psclonlat`
+        # TODO: This is not a full implementation of the bash script `psclonlat`
 
         log(f"Reading lon/lat parameters from `{lonlatfn.resolve()}`")
 
@@ -769,20 +791,23 @@ class PrepareData:
 
         log(f"Reading longitudes from `{lonfn}`")
 
-        lon = np.fromfile(lonfn, dtype=np.float32).reshape((-1, width))
+        lon = np.fromfile(lonfn, dtype=np.float32)
 
         log(f"Reading latitudes from `{latfn}`")
 
-        lat = np.fromfile(latfn, dtype=np.float32).reshape((-1, width))
+        lat = np.fromfile(latfn, dtype=np.float32)
 
         log(f"Reading ij parameters from `{ijfn.resolve()}`")
 
         psc_ids = np.loadtxt(ijfn, delimiter=" ", usecols=(0, 1, 2), dtype=int)
 
-        lon_out = lon[psc_ids[:, 1], psc_ids[:, 2]]
-        lat_out = lat[psc_ids[:, 1], psc_ids[:, 2]]
+        lonlat = np.zeros((len(psc_ids), 2), dtype=np.float32)
+        for i, (pscid, y, x) in enumerate(psc_ids):
+            lon_out = lon[y*width+x]
+            lat_out = lat[y*width+x]
+            lonlat[i,:] = [lon_out, lat_out]
 
-        np.savetxt(llfn, np.c_[lon_out, lat_out], fmt="%f")
+        np.savetxt(llfn, lonlat, fmt="%f")
 
         log(f"{len(lon_out)} lon/lat pairs written to {llfn}")
 
@@ -855,9 +880,13 @@ class PrepareData:
                 mean_ph = np.mean(phs)
                 mean_abs_ph = np.mean(np.absolute(phs))
                 mean_abs_phs[i] = mean_abs_ph
-                log(f"\tmean_phase: {mean_ph:+8.4f}\tmean_abs_phase: {mean_abs_ph:+8.4f}")
+                log(
+                    f"\tmean_phase: {mean_ph:+8.4f}\tmean_abs_phase: {mean_abs_ph:+8.4f}"
+                )
 
-        log(f"Phase time series data of shape {(nfiles, nijs)} written to file `{phfn}`")
+        log(
+            f"Phase time series data of shape {(nfiles, nijs)} written to file `{phfn}`"
+        )
 
         mu = np.mean(mean_abs_phs)
         sigma = np.std(mean_abs_phs)
@@ -967,7 +996,8 @@ def tabulate(data: dict[str, list], precision: int = 16) -> None:
     # Convert the data to strings.
     data = {
         header: [
-            f"{value:.{precision}f}" if isinstance(value, float) else str(value) for value in values
+            f"{value:.{precision}f}" if isinstance(value, float) else str(value)
+            for value in values
         ]
         for header, values in data.items()
     }
@@ -1053,7 +1083,9 @@ def results_equal(
     p = stamps_load(name)
     m = loadmat(name)
 
-    def allclose(p: Array, m: Array, tol: float, equal_nan: bool, modulo: Optional[float]) -> bool:
+    def allclose(
+        p: Array, m: Array, tol: float, equal_nan: bool, modulo: Optional[float]
+    ) -> bool:
         diff = np.abs(p - m)
         if modulo is not None:
             mask = diff > tol
@@ -1226,7 +1258,9 @@ def set_psver(version: int) -> None:
         f.write(str(version))
 
 
-def stamps_save(fn: str, *args: Optional[Array | dict], **kwargs: Optional[Any]) -> None:
+def stamps_save(
+    fn: str, *args: Optional[Array | dict], **kwargs: Optional[Any]
+) -> None:
     """Save a data file with the given name."""
 
     assert not fn.endswith(".mat")
@@ -1395,7 +1429,9 @@ def gausswin(n: int, alpha: float = 2.5) -> Array[np.float64]:
     return np.array(gaussian(n, std), dtype=np.float64)
 
 
-def interp(data: Array[np.floating], r: int, n: int = 4, cutoff: float = 0.5) -> Array[np.floating]:
+def interp(
+    data: Array[np.floating], r: int, n: int = 4, cutoff: float = 0.5
+) -> Array[np.floating]:
     """Resample `data` at a higher rate `r` using lowpass interpolation."""
 
     # Ensure data is a 2D array
@@ -1621,7 +1657,9 @@ def clap_filter(
 
     # Create a window function
     x = np.arange(n_win // 2)
-    wind_func = np.pad(np.add.outer(x, x), ((0, n_win // 2), (0, n_win // 2)), mode="symmetric")
+    wind_func = np.pad(
+        np.add.outer(x, x), ((0, n_win // 2), (0, n_win // 2)), mode="symmetric"
+    )
 
     def adjust_window(wf: Array, shift: int, axis: int) -> Array:
         if axis == 0:  # Adjust rows
@@ -1686,7 +1724,9 @@ def clap_filter(
 
             ph_filt = np.fft.ifft2(ph_fft * G)
 
-            ph_out[i1:i2, j1:j2] = ph_out[i1:i2, j1:j2] + ph_filt[: i2 - i1, : j2 - j1] * wf2
+            ph_out[i1:i2, j1:j2] = (
+                ph_out[i1:i2, j1:j2] + ph_filt[: i2 - i1, : j2 - j1] * wf2
+            )
 
     return ph_out
 
@@ -1777,7 +1817,9 @@ def goldstein_filter(
     ) -> Tuple[int, int, Array]:
         i1 = ix * n_inc
         i2 = min(i1 + n_win, max_bound)
-        wf = wind_func[: i2 - i1, : i2 - i1]  # Adjust the window function for window size
+        wf = wind_func[
+            : i2 - i1, : i2 - i1
+        ]  # Adjust the window function for window size
         return i1, i2, wf
 
     # Loop over each window
@@ -1794,13 +1836,19 @@ def goldstein_filter(
             ph_fft = np.fft.fft2(ph_bit)
 
             # Apply the adaptive filter in the frequency domain
-            H = ifftshift(convolve2d(fftshift(np.abs(ph_fft)), gauss_kernel, mode="same"))
+            H = ifftshift(
+                convolve2d(fftshift(np.abs(ph_fft)), gauss_kernel, mode="same")
+            )
             meanH = np.median(H)
-            H = ((H / meanH) ** alpha if meanH != 0 else H**alpha) * (n_win + n_pad) ** 2
+            H = ((H / meanH) ** alpha if meanH != 0 else H**alpha) * (
+                n_win + n_pad
+            ) ** 2
 
             # Inverse FFT and update the output array
             # NOTE: changed scipy.fft.ifft2 to numpy.fft.ifft2
-            ph_filt = np.fft.ifft2(ph_fft * H).real[: i2 - i1, : j2 - j1] * (wf_i[:, None] * wf_j)
+            ph_filt = np.fft.ifft2(ph_fft * H).real[: i2 - i1, : j2 - j1] * (
+                wf_i[:, None] * wf_j
+            )
             ph_out[i1:i2, j1:j2] += ph_filt
 
     return ph_out
@@ -1830,7 +1878,9 @@ def gradient_filter(
     jfreq = Hmag.copy()
     ij = np.full((n_win_i * n_win_j, 2), np.nan)
 
-    def calc_bounds(ix: int, n_inc: int, n_win: int, max_dim: int) -> Tuple[int, int, int, int]:
+    def calc_bounds(
+        ix: int, n_inc: int, n_win: int, max_dim: int
+    ) -> Tuple[int, int, int, int]:
         i1 = ix * n_inc
         i2 = min(i1 + n_win, max_dim)
         return max(i2 - n_win, 0), i2
@@ -1943,14 +1993,18 @@ def topofit(
 
     # Weighted least squares fit for residual phase
     weighting = np.abs(cpxphase)
-    mopt = np.linalg.lstsq(weighting[:, None] * bperp[:, None], weighting * resphase, rcond=None)[0]
+    mopt = np.linalg.lstsq(
+        weighting[:, None] * bperp[:, None], weighting * resphase, rcond=None
+    )[0]
     K0 += mopt[0]
 
     # Calculate phase residuals
     phase_residual = cpxphase * np.exp(-1j * (K0 * bperp))
     mean_phase_residual = np.sum(phase_residual)
     C0 = np.angle(mean_phase_residual)  # Updated static offset
-    coh0 = np.abs(mean_phase_residual) / np.sum(np.abs(phase_residual))  # Updated coherence
+    coh0 = np.abs(mean_phase_residual) / np.sum(
+        np.abs(phase_residual)
+    )  # Updated coherence
 
     return K0, C0, coh0, phase_residual
 
@@ -2102,8 +2156,12 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     bperp_mat = np.zeros((n_ps, n_ifg))
     for i in range(n_ifg):
         basename = ifgs[i].with_suffix(".base")
-        B_TCN = np.array([float(x) for x in read_params(basename, "initial_baseline(TCN)", 3)])
-        BR_TCN = np.array([float(x) for x in read_params(basename, "initial_baseline_rate", 3)])
+        B_TCN = np.array(
+            [float(x) for x in read_params(basename, "initial_baseline(TCN)", 3)]
+        )
+        BR_TCN = np.array(
+            [float(x) for x in read_params(basename, "initial_baseline_rate", 3)]
+        )
         bc = B_TCN[1] + BR_TCN[1] * (ij[:, 1] - mean_az) / prf
         bn = B_TCN[2] + BR_TCN[2] * (ij[:, 1] - mean_az) / prf
         # Convert baselines from (T)CN to perpendicular-parallel coordinates
@@ -2194,7 +2252,9 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     if (np.max(xynew[0]) - np.min(xynew[0]) < np.max(xy[0]) - np.min(xy[0])) and (
         np.max(xynew[1]) - np.min(xynew[1]) < np.max(xy[1]) - np.min(xy[1])
     ):
-        log(f"Rotation improved alignment, applying rotation {theta * 180 / np.pi:.2f}°")
+        log(
+            f"Rotation improved alignment, applying rotation {theta * 180 / np.pi:.2f}°"
+        )
         xy = xynew.T
 
     # Sort local coords `xy` in ascending y, then x order
@@ -2251,7 +2311,9 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     )
 
     stamps_save(f"ph{psver}", ph)  # phase data (n_ps, n_ifg)  - complex
-    stamps_save(f"bp{psver}", bperp_mat)  # perpendicular baselines (n_ps, n_ifg) - meters
+    stamps_save(
+        f"bp{psver}", bperp_mat
+    )  # perpendicular baselines (n_ps, n_ifg) - meters
     stamps_save(f"la{psver}", la)  # incidence angles (n_ps,) - radians
     stamps_save(f"da{psver}", D_A)  # dispersion (fano factor) (n_ps,) - unitless
     stamps_save(f"hgt{psver}", hgt)  # height data (n_ps,) - meters
@@ -2406,7 +2468,9 @@ def stage2_estimate_noise(max_iters: int = 1000, opts: dotdict = dotdict()) -> N
             # This is done by subtracting the random phase of one image from the other,
             # based on the unique day indices for each interferogram (ifgday_ix)
             # This simulates the random phase component in each interferogram
-            rand_ifg[:, i] = rand_image[:, ifgday_ix[i, 1]] - rand_image[:, ifgday_ix[i, 0]]
+            rand_ifg[:, i] = (
+                rand_image[:, ifgday_ix[i, 1]] - rand_image[:, ifgday_ix[i, 0]]
+            )
     else:
         # If not using small baseline flag, generate random interferogram phase values directly
         # This simulates random phase components in interferograms without considering individual images
@@ -2452,13 +2516,17 @@ def stage2_estimate_noise(max_iters: int = 1000, opts: dotdict = dotdict()) -> N
 
     # Calculate grid indices for the third column of 'xy'
     grid_ij = np.zeros((xy.shape[0], 2), dtype=int)
-    grid_ij[:, 0] = np.ceil((xy[:, 2] - np.min(xy[:, 2]) + 1e-6) / grid_size).astype(int)
+    grid_ij[:, 0] = np.ceil((xy[:, 2] - np.min(xy[:, 2]) + 1e-6) / grid_size).astype(
+        int
+    )
 
     # Adjust indices to ensure they are within bounds for the first column
     grid_ij[grid_ij[:, 0] == np.max(grid_ij[:, 0]), 0] = np.max(grid_ij[:, 0]) - 1
 
     # Calculate grid indices for the second column of 'xy'
-    grid_ij[:, 1] = np.ceil((xy[:, 1] - np.min(xy[:, 1]) + 1e-6) / grid_size).astype(int)
+    grid_ij[:, 1] = np.ceil((xy[:, 1] - np.min(xy[:, 1]) + 1e-6) / grid_size).astype(
+        int
+    )
 
     # Adjust indices to ensure they are within bounds for the second column
     grid_ij[grid_ij[:, 1] == np.max(grid_ij[:, 1]), 1] = np.max(grid_ij[:, 1]) - 1
@@ -2532,7 +2600,9 @@ def stage2_estimate_noise(max_iters: int = 1000, opts: dotdict = dotdict()) -> N
             # Check if there's a non-null value in every interferogram
             if np.all(psdph != 0):
                 # Fit the topographic phase model to the phase difference
-                Kopt, Copt, cohopt, ph_residual = topofit(psdph, bperp_mat[i, :], n_trial_wraps)
+                Kopt, Copt, cohopt, ph_residual = topofit(
+                    psdph, bperp_mat[i, :], n_trial_wraps
+                )
 
                 # Store the results
                 K_ps[i] = Kopt
@@ -2588,9 +2658,9 @@ def stage2_estimate_noise(max_iters: int = 1000, opts: dotdict = dotdict()) -> N
 
             # Interpolate the random phase density to the phase coherence values
             gauss_filter = gausswin(7)
-            Prand = lfilter(gauss_filter, 1, np.concatenate((np.ones(7), Prand))) / np.sum(
-                gauss_filter
-            )
+            Prand = lfilter(
+                gauss_filter, 1, np.concatenate((np.ones(7), Prand))
+            ) / np.sum(gauss_filter)
             Prand = Prand[7:]  # remove padding
             Prand = interp(np.insert(Prand, 0, 1), 10)[:-9]
             Prand_ps = Prand[np.round(coh_ps * 1000).astype(int)]
@@ -2711,7 +2781,9 @@ def stage3_select_ps(reest_flag: int = 0, opts: dotdict = dotdict()) -> None:
     # Adjust ifg_index based on small_baseline_flag
     if not small_baseline_flag == "y":
         master_ix = np.sum(ps["master_day"] > ps["day"]) + 1
-        no_master_ix = np.array([i for i in range(1, ps["n_ifg"] + 1) if i not in [master_ix]])
+        no_master_ix = np.array(
+            [i for i in range(1, ps["n_ifg"] + 1) if i not in [master_ix]]
+        )
         ifg_index = np.array([i for i in ifg_index if i not in [master_ix]])
         ifg_index = np.array([i - 1 if i > master_ix else i for i in ifg_index])
         no_master_ix -= 1  # Correct for Python indexing
@@ -2745,7 +2817,9 @@ def stage3_select_ps(reest_flag: int = 0, opts: dotdict = dotdict()) -> None:
     if D_A.size >= 10000:
         D_A_sort = np.sort(D_A)
         bs = 10000 if D_A.size >= 50000 else 2000
-        D_A_max = np.vstack((np.array([0]), D_A_sort[bs:-bs:bs, np.newaxis], D_A_sort[-1]))
+        D_A_max = np.vstack(
+            (np.array([0]), D_A_sort[bs:-bs:bs, np.newaxis], D_A_sort[-1])
+        )
     else:
         D_A_max = np.array([0, 1])
         D_A = np.ones_like(pm["coh_ps"])
@@ -2783,14 +2857,20 @@ def stage3_select_ps(reest_flag: int = 0, opts: dotdict = dotdict()) -> None:
             ]  # discard PSC for which coherence was not calculated
 
             Na = np.histogram(coh_chunk, bins=pm["coh_bins"])[0]
-            Nr = Nr_dist * Na[1 : low_coh_thresh + 1].sum() / Nr_dist[1 : low_coh_thresh + 1].sum()
+            Nr = (
+                Nr_dist
+                * Na[1 : low_coh_thresh + 1].sum()
+                / Nr_dist[1 : low_coh_thresh + 1].sum()
+            )
 
             # check(f"Na_{i+1}", Na)
 
             Na[Na == 0] = 1  # avoid divide by zero
 
             if select_method.lower() == "percent":
-                percent_rand = np.flip(np.cumsum(np.flip(Nr)) / np.cumsum(np.flip(Na)) * 100)
+                percent_rand = np.flip(
+                    np.cumsum(np.flip(Nr)) / np.cumsum(np.flip(Na)) * 100
+                )
             else:
                 percent_rand = np.flip(np.cumsum(np.flip(Nr)))  # absolute number
 
@@ -2922,7 +3002,9 @@ def stage3_select_ps(reest_flag: int = 0, opts: dotdict = dotdict()) -> None:
                     # Remove the pixel for which the smoothing is computed
                     ps_bit_i = ps_ij[0] - i_min
                     ps_bit_j = ps_ij[1] - j_min
-                    ph_bit = pm["ph_grid"][i_min : (i_max + 1), j_min : (j_max + 1), :].copy()
+                    ph_bit = pm["ph_grid"][
+                        i_min : (i_max + 1), j_min : (j_max + 1), :
+                    ].copy()
                     ph_bit[ps_bit_i, ps_bit_j, :] = 0
 
                     # Oversample update for PS removal + general usage update
@@ -2961,7 +3043,9 @@ def stage3_select_ps(reest_flag: int = 0, opts: dotdict = dotdict()) -> None:
 
             for i in range(n_ps):
                 psdph = ph[i] * np.conj(ph_patch2[i])
-                if not np.any(psdph == 0):  # Ensure there's a non-null value in every interferogram
+                if not np.any(
+                    psdph == 0
+                ):  # Ensure there's a non-null value in every interferogram
                     psdph /= np.abs(psdph)
                     Kopt, Copt, cohopt, ph_residual = topofit(
                         psdph[ifg_index],
@@ -3002,12 +3086,18 @@ def stage3_select_ps(reest_flag: int = 0, opts: dotdict = dotdict()) -> None:
             ]  # Discard PSC for which coherence was not calculated
 
             Na, _ = np.histogram(coh_chunk, bins=pm["coh_bins"])
-            Nr = Nr_dist * Na[: low_coh_thresh + 1].sum() / Nr_dist[: low_coh_thresh + 1].sum()
+            Nr = (
+                Nr_dist
+                * Na[: low_coh_thresh + 1].sum()
+                / Nr_dist[: low_coh_thresh + 1].sum()
+            )
 
             Na[Na == 0] = 1  # Avoid divide by zero
 
             if select_method.lower() == "percent":
-                percent_rand = np.flip(np.cumsum(np.flip(Nr)) / np.cumsum(np.flip(Na)) * 100)
+                percent_rand = np.flip(
+                    np.cumsum(np.flip(Nr)) / np.cumsum(np.flip(Na)) * 100
+                )
             else:
                 percent_rand = np.flip(np.cumsum(np.flip(Nr)))  # Absolute number
 
@@ -3106,7 +3196,9 @@ def stage3_select_ps(reest_flag: int = 0, opts: dotdict = dotdict()) -> None:
         clap_alpha=clap_alpha,  # CLAP alpha (scalar) - unitless
         clap_beta=clap_beta,  # CLAP beta (scalar) - unitless
         n_win=n_win,  # CLAP window size (scalar) - unitless
-        max_percent_rand=round(max_percent_rand, 0),  # maximum percent random (scalar) - unitless
+        max_percent_rand=round(
+            max_percent_rand, 0
+        ),  # maximum percent random (scalar) - unitless
         gamma_stdev_reject=gamma_stdev_reject,  # gamma standard deviation reject (scalar) - unitless
         small_baseline_flag=small_baseline_flag,  # small baseline flag (string) - unitless
         ifg_index=ifg_index + 1,  # 1-based indexing to match MATLAB
@@ -3278,7 +3370,9 @@ def stage4_weed_ps(
         log("Initializing neighbour matrix")
 
         ij_shift = ij2[:, 1:] + np.tile([2, 2] - np.min(ij2[:, 1:], axis=0), (n_ps, 1))
-        neigh_ix = np.zeros((np.max(ij_shift[:, 0]) + 1, np.max(ij_shift[:, 1]) + 1), dtype=int)
+        neigh_ix = np.zeros(
+            (np.max(ij_shift[:, 0]) + 1, np.max(ij_shift[:, 1]) + 1), dtype=int
+        )
         miss_middle = np.ones((3, 3), dtype=bool)
         miss_middle[1, 1] = False
 
@@ -3344,15 +3438,20 @@ def stage4_weed_ps(
 
     ix_weed_num = np.where(ix_weed)[0]
     _, unique_indices = np.unique(xy_weed[:, 1:], axis=0, return_index=True)
-    dups = np.setdiff1d(np.arange(np.sum(ix_weed)), unique_indices)  # pixels with duplicate lon/lat
+    dups = np.setdiff1d(
+        np.arange(np.sum(ix_weed)), unique_indices
+    )  # pixels with duplicate lon/lat
 
     for i in range(len(dups)):
         dups_ix_weed = np.where(
-            (xy_weed[:, 1] == xy_weed[dups[i], 1]) & (xy_weed[:, 2] == xy_weed[dups[i], 2])
+            (xy_weed[:, 1] == xy_weed[dups[i], 1])
+            & (xy_weed[:, 2] == xy_weed[dups[i], 2])
         )[0]
         dups_ix = ix_weed_num[dups_ix_weed]
         max_coh_ix = np.argmax(coh_ps2[dups_ix])
-        ix_weed[dups_ix[np.arange(len(dups_ix)) != max_coh_ix]] = False  # drop dups with lowest coh
+        ix_weed[dups_ix[np.arange(len(dups_ix)) != max_coh_ix]] = (
+            False  # drop dups with lowest coh
+        )
 
     if len(dups) > 0:
         xy_weed = xy2[ix_weed, :]
@@ -3423,7 +3522,9 @@ def stage4_weed_ps(
         n_use = len(ifg_index)
         for i in drop_ifg_index:
             if small_baseline_flag.lower() == "y":
-                ds = datetime.strptime(str(ps["ifgday"][i, 1]), "%Y%m%d").strftime("%Y-%m-%d")
+                ds = datetime.strptime(str(ps["ifgday"][i, 1]), "%Y%m%d").strftime(
+                    "%Y-%m-%d"
+                )
                 log(f"{ds}-{ds} dropped from noise estimation")
             else:
                 ds = datetime.strptime(str(day[i]), "%Y%m%d").strftime("%Y-%m-%d")
@@ -3754,7 +3855,9 @@ def ps_calc_ifg_std() -> None:
     log("Estimating noise standard deviation (in degrees)")
 
     if small_baseline_flag == "y":
-        ph_diff = np.angle(ph * np.conj(pm.ph_patch) * np.exp(-1j * (pm.K_ps[:, np.newaxis] * bp)))
+        ph_diff = np.angle(
+            ph * np.conj(pm.ph_patch) * np.exp(-1j * (pm.K_ps[:, np.newaxis] * bp))
+        )
     else:
         bperp_mat = np.hstack(
             (
@@ -3790,12 +3893,16 @@ def ps_calc_ifg_std() -> None:
     if small_baseline_flag == "y":
         ifgday = ps.ifgday
         for i in range(ps["n_ifg"]):
-            log(f"{i+1:3d}\t{datestr(ifgday[i, 0])}_{datestr(ifgday[i, 1])}\t{ifg_std[i]:>3.2f}")
+            log(
+                f"{i+1:3d}\t{datestr(ifgday[i, 0])}_{datestr(ifgday[i, 1])}\t{ifg_std[i]:>3.2f}"
+            )
     else:
         day = ps.day
         log("INDEX    IFG_DATE       MEAN    STD_DEV")
         for i in range(ps["n_ifg"]):
-            log(f"{i+1:5d}  {datestr(day[i]):10s}    {ifg_mean[i]:>6.2f}°    {ifg_std[i]:>6.2f}°")
+            log(
+                f"{i+1:5d}  {datestr(day[i]):10s}    {ifg_mean[i]:>6.2f}°    {ifg_std[i]:>6.2f}°"
+            )
 
     stamps_save(f"ifgstd{psver}", ifg_std=ifg_std)
 
@@ -3915,7 +4022,11 @@ def stage6_unwrap_phases(opts: dotdict = dotdict()) -> None:
             # Subtract master APS
             ph_w *= np.exp(-1j * scla.C_ps_uw[:, np.newaxis] * np.ones_like(bperp_mat))
 
-            if scla_deramp == "y" and "ph_ramp" in scla and scla.ph_ramp.shape[0] == ps.n_ps:
+            if (
+                scla_deramp == "y"
+                and "ph_ramp" in scla
+                and scla.ph_ramp.shape[0] == ps.n_ps
+            ):
                 ramp_subtracted_sw = 1  # FIXME: Change to bool
 
                 # Subtract orbital ramps
@@ -3924,7 +4035,9 @@ def stage6_unwrap_phases(opts: dotdict = dotdict()) -> None:
                 log("   wrong number of PS in scla - subtraction skipped...")
                 os.remove(sclaname + ".mat")  # FIXME: Check if this is correct
 
-    if small_baseline_flag == "y" and os.path.exists(sclaname + ".mat"):  # Small baselines
+    if small_baseline_flag == "y" and os.path.exists(
+        sclaname + ".mat"
+    ):  # Small baselines
         log("   subtracting scla...")
 
         scla = stamps_load(sclaname)
@@ -3940,7 +4053,11 @@ def stage6_unwrap_phases(opts: dotdict = dotdict()) -> None:
             if unwrap_hold_good_values == "y":
                 options["ph_uw_predef"] -= scla.K_ps_uw[:, np.newaxis] * bperp_mat
 
-            if scla_deramp == "y" and "ph_ramp" in scla and scla.ph_ramp.shape[0] == ps.n_ps:
+            if (
+                scla_deramp == "y"
+                and "ph_ramp" in scla
+                and scla.ph_ramp.shape[0] == ps.n_ps
+            ):
                 ramp_subtracted_sw = 1  # FIXME: Change to bool
 
                 # Subtract orbital ramps
@@ -4006,7 +4123,9 @@ def stage6_unwrap_phases(opts: dotdict = dotdict()) -> None:
     else:
         options["lowfilt_flag"] = "n"
         mix = int(ps.master_ix)
-        ifgday_ix = np.column_stack((np.ones(ps.n_ifg) * mix, np.arange(ps.n_ifg))).astype(np.int32)
+        ifgday_ix = np.column_stack(
+            (np.ones(ps.n_ifg) * mix, np.arange(ps.n_ifg))
+        ).astype(np.int32)
         master_ix = np.sum(ps.master_day > ps.day)
         unwrap_ifg_index = np.setdiff1d(
             unwrap_ifg_index, master_ix
@@ -4017,7 +4136,9 @@ def stage6_unwrap_phases(opts: dotdict = dotdict()) -> None:
         options["ph_uw_predef"] = options["ph_uw_predef"][:, unwrap_ifg_index]
 
     if sys.platform.startswith("win"):
-        log("Windows detected: using old unwrapping code without statistical cost processing")
+        log(
+            "Windows detected: using old unwrapping code without statistical cost processing"
+        )
         ph_uw_some = uw_nosnaphu(ph_w[:, unwrap_ifg_index], ps.xy, day, options)
     else:
         ph_uw_some, msd_some = uw_3d(
@@ -4101,7 +4222,9 @@ def ps_plot_tca(aps, aps_name) -> Tuple[np.ndarray, str, str]:  # type: ignore
     raise NotImplementedError
 
 
-def uw_nosnaphu(ph_w: Array, xy: Array, day: Array, options: Optional[dict] = None) -> Array:
+def uw_nosnaphu(
+    ph_w: Array, xy: Array, day: Array, options: Optional[dict] = None
+) -> Array:
     raise NotImplementedError
 
 
@@ -4267,16 +4390,21 @@ def uw_stat_costs(
 
     Z = ui.Z
 
-    grid_edges = np.concatenate([ui.colix[np.abs(ui.colix) > 0], ui.rowix[np.abs(ui.rowix) > 0]])
+    grid_edges = np.concatenate(
+        [ui.colix[np.abs(ui.colix) > 0], ui.rowix[np.abs(ui.rowix) > 0]]
+    )
     # matlab `hist` uses bin centers, but np.histogram uses bin edges
-    n_edges = np.histogram(np.abs(grid_edges), bins=np.arange(1, ui.n_edge + 2) - 0.5)[0]
+    n_edges = np.histogram(np.abs(grid_edges), bins=np.arange(1, ui.n_edge + 2) - 0.5)[
+        0
+    ]
 
     check("n_edges", n_edges)
 
     if unwrap_method.upper() == "2D":
         raise NotImplementedError("This option has not been verified for accuracy")
         edge_length = np.sqrt(
-            np.diff(x[ui.edgs[:, 1:3]], axis=1) ** 2 + np.diff(y[ui.edgs[:, 1:3]], axis=1) ** 2
+            np.diff(x[ui.edgs[:, 1:3]], axis=1) ** 2
+            + np.diff(y[ui.edgs[:, 1:3]], axis=1) ** 2
         )
         if uw.pix_size == 0:
             pix_size = 5  # if we don't know resolution
@@ -4311,7 +4439,9 @@ def uw_stat_costs(
         colix[np.abs(colix) == i + 1] = np.nan
 
     with np.errstate(invalid="ignore"):  # handle nans
-        sigsq = np.round((sigsq_noise * nshortcycle**2) / costscale * n_edges, 0).astype(np.int16)
+        sigsq = np.round(
+            (sigsq_noise * nshortcycle**2) / costscale * n_edges, 0
+        ).astype(np.int16)
     sigsq[sigsq < 1] = 1  # zero causes snaphu to crash
 
     # check("sigsq_noise", sigsq_noise)
@@ -4355,7 +4485,9 @@ def uw_stat_costs(
         log(f"Processing IFG {i1+1} of {len(subset_ifg_index)}")
 
         spread = np.ravel(ut.spread[:, i1].todense())
-        spread = ((np.abs(spread) * nshortcycle**2) / 6 / costscale * n_edges).astype(np.int16)
+        spread = ((np.abs(spread) * nshortcycle**2) / 6 / costscale * n_edges).astype(
+            np.int16
+        )
 
         sigsqtot = sigsq + spread
 
@@ -4370,18 +4502,22 @@ def uw_stat_costs(
         colstdgrid[nzcolix] = sigsqtot[ix]
         colcost[:, 1::4] = colstdgrid
 
-        offset_cycle = (np.angle(np.exp(1j * ut.dph_space_uw[:, i1])) - dph_smooth[:, i1]) / (
-            2 * np.pi
-        )
+        offset_cycle = (
+            np.angle(np.exp(1j * ut.dph_space_uw[:, i1])) - dph_smooth[:, i1]
+        ) / (2 * np.pi)
 
         ix = np.abs(rowix[nzrowix]).astype(np.int32) - 1  # 0-based indexing
         offgrid = np.zeros(rowix.shape, dtype=np.int16)
-        offgrid[nzrowix] = np.round(offset_cycle[ix] * np.sign(rowix[nzrowix]) * nshortcycle, 0)
+        offgrid[nzrowix] = np.round(
+            offset_cycle[ix] * np.sign(rowix[nzrowix]) * nshortcycle, 0
+        )
         rowcost[:, ::4] = -offgrid
 
         ix = np.abs(colix[nzcolix]).astype(np.int32) - 1  # 0-based indexing
         offgrid = np.zeros(colix.shape, dtype=np.int16)
-        offgrid[nzcolix] = np.round(offset_cycle[ix] * np.sign(colix[nzcolix]) * nshortcycle, 0)
+        offgrid[nzcolix] = np.round(
+            offset_cycle[ix] * np.sign(colix[nzcolix]) * nshortcycle, 0
+        )
         colcost[:, ::4] = offgrid
 
         # check("offset_cycle", offset_cycle)
@@ -4403,7 +4539,11 @@ def uw_stat_costs(
         run_snaphu_on(Path("snaphu.conf"), ncol)
 
         with open("snaphu.out", "rb") as fid:
-            ifguw = np.fromfile(fid, dtype=np.float32).astype(np.float64).reshape(nrow, ncol)
+            ifguw = (
+                np.fromfile(fid, dtype=np.float32)
+                .astype(np.float64)
+                .reshape(nrow, ncol)
+            )
 
         check(f"ifguw_{i1+1}", ifguw, tol=1e-2)
 
@@ -4415,7 +4555,9 @@ def uw_stat_costs(
         ifg_diff2 = np.ravel(ifguw[:, :-1] - ifguw[:, 1:], "F")
         ifg_diff2 = ifg_diff2[ifg_diff2 != 0]
 
-        msd[i1] = (np.sum(ifg_diff1**2) + np.sum(ifg_diff2**2)) / (len(ifg_diff1) + len(ifg_diff2))
+        msd[i1] = (np.sum(ifg_diff1**2) + np.sum(ifg_diff2**2)) / (
+            len(ifg_diff1) + len(ifg_diff2)
+        )
 
         ifguw_ur = np.ravel(ifguw, "F")
         nzix_ur = np.ravel(uw.nzix, "F")
@@ -4456,9 +4598,13 @@ def uw_unwrap_from_grid(xy: Array, pix_size: int) -> Tuple[Array, Array]:
             ph_uw_pix = uu.ph_uw[int(ix) - 1, :]
 
             if np.isrealobj(uw.ph_in):
-                ph_uw[i, :] = ph_uw_pix + np.angle(np.exp(1j * (uw.ph_in[i, :] - ph_uw_pix)))
+                ph_uw[i, :] = ph_uw_pix + np.angle(
+                    np.exp(1j * (uw.ph_in[i, :] - ph_uw_pix))
+                )
             else:
-                ph_uw[i, :] = ph_uw_pix + np.angle(uw.ph_in[i, :] * np.exp(-1j * ph_uw_pix))
+                ph_uw[i, :] = ph_uw_pix + np.angle(
+                    uw.ph_in[i, :] * np.exp(-1j * ph_uw_pix)
+                )
 
     if uw.ph_in_predef is not None and len(uw.ph_in_predef) > 0:
         predef_ix = ~np.isnan(uw.ph_in_predef)
@@ -4554,7 +4700,10 @@ def uw_sb_unwrap_space_time(
     # check("dph_space", uw.ph[ui.edgs[:, 2] - 1, :], tol=1e-6)
 
     if predef_flag == "y":
-        dph_space_uw = uw.ph_uw_predef[ui.edgs[:, 2] - 1, :] - uw.ph_uw_predef[ui.edgs[:, 1] - 1, :]
+        dph_space_uw = (
+            uw.ph_uw_predef[ui.edgs[:, 2] - 1, :]
+            - uw.ph_uw_predef[ui.edgs[:, 1] - 1, :]
+        )
         predef_ix = ~np.isnan(dph_space_uw)
         dph_space_uw = dph_space_uw[predef_ix]
     else:
@@ -4600,7 +4749,9 @@ def uw_sb_unwrap_space_time(
         dph_sub = dph_space[:, ix]
         n_temp_wraps = n_temp_wraps * (temp_range_sub / temp_range)
 
-        trial_mult = np.arange(-np.ceil(8 * n_temp_wraps), np.ceil(8 * n_temp_wraps) + 1)
+        trial_mult = np.arange(
+            -np.ceil(8 * n_temp_wraps), np.ceil(8 * n_temp_wraps) + 1
+        )
         n_trials = len(trial_mult)
         trial_phase = temp_sub / temp_range_sub * np.pi / 4
         trial_phase_mat = np.exp(-1j * trial_phase[:, None] * trial_mult)
@@ -4640,7 +4791,9 @@ def uw_sb_unwrap_space_time(
                 offset_phase = np.sum(resphase)
                 resphase = np.angle(resphase * np.conj(offset_phase))
                 weighting = np.abs(cpxphase)
-                mopt = lstsq(weighting[:, None] * temp_sub[:, None], weighting * resphase)[0]
+                mopt = lstsq(
+                    weighting[:, None] * temp_sub[:, None], weighting * resphase
+                )[0]
                 Kt[i] = K0 + mopt
                 phase_residual = cpxphase * np.exp(-1j * (Kt[i] * temp_sub))
                 mean_phase_residual = np.nansum(phase_residual)
@@ -4707,7 +4860,9 @@ def uw_sb_unwrap_space_time(
                 dph_sub[sign_ix == -1] = np.conj(dph_sub[sign_ix == -1])
 
                 # Add zero phase master
-                dph_sub = np.hstack((dph_sub, np.nanmean(np.abs(dph_sub), axis=1, keepdims=True)))
+                dph_sub = np.hstack(
+                    (dph_sub, np.nanmean(np.abs(dph_sub), axis=1, keepdims=True))
+                )
 
                 slave_ix = np.sum(ifgday_ix[ix, :], axis=1) - max_ix
 
@@ -4744,7 +4899,9 @@ def uw_sb_unwrap_space_time(
 
         # DEBUG: default case
 
-        trial_mult = np.arange(-np.ceil(8 * n_trial_wraps), np.ceil(8 * n_trial_wraps) + 1)
+        trial_mult = np.arange(
+            -np.ceil(8 * n_trial_wraps), np.ceil(8 * n_trial_wraps) + 1
+        )
         n_trials = len(trial_mult)
 
         trial_phase = bperp_sub / bperp_range_sub * np.pi / 4
@@ -4788,7 +4945,9 @@ def uw_sb_unwrap_space_time(
                 resphase = np.angle(resphase * np.conj(offset_phase))
 
                 weighting = np.abs(cpxphase)
-                mopt = lstsq(weighting[:, None] * bperp_sub[:, None], weighting * resphase)[0]
+                mopt = lstsq(
+                    weighting[:, None] * bperp_sub[:, None], weighting * resphase
+                )[0]
 
                 K[i] = K0 + mopt
 
@@ -4802,7 +4961,9 @@ def uw_sb_unwrap_space_time(
         if temp_flag == "y":
             raise NotImplementedError("Not checked for correctness")
 
-            dph_space[K == 0, :] = dph_space[K == 0, :] * np.exp(1j * Kt[K == 0] * temp[:, None])
+            dph_space[K == 0, :] = dph_space[K == 0, :] * np.exp(
+                1j * Kt[K == 0] * temp[:, None]
+            )
             Kt[K == 0] = 0
             K[Kt == 0] = 0
 
@@ -4896,10 +5057,14 @@ def uw_sb_unwrap_space_time(
                         weight_factor = weight_factor / np.sum(weight_factor)
 
                         # Calculate the weighted mean phase
-                        dph_mean = np.sum(dph_sub * weight_factor[np.newaxis, :], axis=1)
+                        dph_mean = np.sum(
+                            dph_sub * weight_factor[np.newaxis, :], axis=1
+                        )
                         dph_mean_adj = (
                             np.mod(
-                                dph_sub_angle - np.angle(dph_mean)[:, np.newaxis] + np.pi,
+                                dph_sub_angle
+                                - np.angle(dph_mean)[:, np.newaxis]
+                                + np.pi,
                                 2 * np.pi,
                             )
                             - np.pi
@@ -4931,7 +5096,9 @@ def uw_sb_unwrap_space_time(
                         np.hstack(
                             (
                                 np.angle(dph_smooth[:, :1]),
-                                np.angle(dph_smooth[:, 1:] * np.conj(dph_smooth[:, :-1])),
+                                np.angle(
+                                    dph_smooth[:, 1:] * np.conj(dph_smooth[:, :-1])
+                                ),
                             )
                         ),
                         axis=1,
@@ -4944,10 +5111,14 @@ def uw_sb_unwrap_space_time(
                     else:
                         close_master_ix = close_master_ix[0]
                         if close_master_ix > 0:
-                            close_master_ix = np.array([close_master_ix - 1, close_master_ix])
+                            close_master_ix = np.array(
+                                [close_master_ix - 1, close_master_ix]
+                            )
 
                     close_master_ix = np.atleast_1d(close_master_ix)
-                    dph_close_master = np.nanmean(dph_smooth_sub[:, close_master_ix], axis=1)
+                    dph_close_master = np.nanmean(
+                        dph_smooth_sub[:, close_master_ix], axis=1
+                    )
 
                     dph_smooth_sub = (
                         dph_smooth_sub
@@ -4962,10 +5133,14 @@ def uw_sb_unwrap_space_time(
                     aix = ix[asix]
 
                     std_noise1 = np.std(
-                        np.angle(dph_space[:, aix] * np.exp(-1j * dph_smooth_ifg[:, aix]))
+                        np.angle(
+                            dph_space[:, aix] * np.exp(-1j * dph_smooth_ifg[:, aix])
+                        )
                     )
                     std_noise2 = np.std(
-                        np.angle(dph_space[:, aix] * np.exp(-1j * dph_smooth_sub[:, asix]))
+                        np.angle(
+                            dph_space[:, aix] * np.exp(-1j * dph_smooth_sub[:, asix])
+                        )
                     )
 
                     keep_ix = np.ones(n_sub, dtype=bool)
@@ -5003,7 +5178,9 @@ def uw_sb_unwrap_space_time(
                 dph_space_series = np.zeros((n, n_dph))
                 for i in range(n_dph):
                     W = predef_ix[i, :] + 0.01
-                    dph_space_series[1:, i] = lstsq(G[:, 1:], dph_space_angle[i, :], W)[0]
+                    dph_space_series[1:, i] = lstsq(G[:, 1:], dph_space_angle[i, :], W)[
+                        0
+                    ]
 
             if predef_flag == "n":
                 # DEBUG: default case
@@ -5038,7 +5215,9 @@ def uw_sb_unwrap_space_time(
 
                 ph_noise = np.angle(uw["ph"] * np.conj(uw["ph_lowpass"]))
 
-                dph_noise_sf = ph_noise[ui["edgs"][:, 2], :] - ph_noise[ui["edgs"][:, 1], :]
+                dph_noise_sf = (
+                    ph_noise[ui["edgs"][:, 2], :] - ph_noise[ui["edgs"][:, 1], :]
+                )
 
                 m_minmax = np.tile(np.array([[-np.pi, np.pi]]), (5, 1)) * np.tile(
                     np.array([[0.5], [0.25], [1], [0.25], [1]]), (1, 2)
@@ -5161,7 +5340,9 @@ def uw_sb_unwrap_space_time(
             )
 
             dph_noise[shaky_ix, :] = dph_noise2[shaky_ix, :]
-            dph_space_uw[shaky_ix, :] = dph_smooth_uw2[shaky_ix, :] + dph_noise2[shaky_ix, :]
+            dph_space_uw[shaky_ix, :] = (
+                dph_smooth_uw2[shaky_ix, :] + dph_noise2[shaky_ix, :]
+            )
             spread[shaky_ix, :] = spread2[shaky_ix, :]
 
         else:
@@ -5462,7 +5643,9 @@ def wrap_filter(
                 j_shift = j2 - n_j
                 j2 = n_j
                 j1 = n_j - n_win + 1
-                wf2 = np.hstack((np.zeros((n_win, j_shift)), wf2[:, : (n_win - j_shift)]))
+                wf2 = np.hstack(
+                    (np.zeros((n_win, j_shift)), wf2[:, : (n_win - j_shift)])
+                )
 
             # Initialize the phase bit for the current window
             ph_bit[:n_win, :n_win] = ph[(i1 - 1) : i2, (j1 - 1) : j2]
@@ -5470,7 +5653,9 @@ def wrap_filter(
             # Apply FFT and filter the phase data
             ph_fft = np.fft.fft2(ph_bit)
             H = np.abs(ph_fft)
-            H = ifftshift(convolve2d(fftshift(H), B, mode="same"))  # Smooth the frequency response
+            H = ifftshift(
+                convolve2d(fftshift(H), B, mode="same")
+            )  # Smooth the frequency response
 
             medianH = np.median(H)
             if medianH != 0:
@@ -5487,11 +5672,15 @@ def wrap_filter(
 
             # Optionally apply lowpass filtering
             if low_flag == "y":
-                ph_filt_low = np.fft.ifft2(ph_fft * L)[:n_win, :n_win] * wf2  # Lowpass filter
+                ph_filt_low = (
+                    np.fft.ifft2(ph_fft * L)[:n_win, :n_win] * wf2
+                )  # Lowpass filter
                 ph_out_low[i1 - 1 : i2, j1 - 1 : j2] += ph_filt_low
 
             # Update the output array with filtered data
-            ph_out[i1 - 1 : i2, j1 - 1 : j2] = ph_out[i1 - 1 : i2, j1 - 1 : j2] + ph_filt
+            ph_out[i1 - 1 : i2, j1 - 1 : j2] = (
+                ph_out[i1 - 1 : i2, j1 - 1 : j2] + ph_filt
+            )
 
     # Reset the magnitude of the output phase to match the input phase
     ph_out = abs(ph) * np.exp(1j * np.angle(ph_out))
@@ -5593,7 +5782,9 @@ def uw_interp() -> None:
     Zvec = np.ravel(Z.T)  # Column edges
     grid_edges = np.vstack((Zvec[:-nrow], Zvec[nrow:])).T
     Zvec = np.ravel(Z)  # Add the row edges
-    grid_edges = np.vstack((grid_edges, np.column_stack((Zvec[:-ncol], Zvec[ncol:]))))  # OK
+    grid_edges = np.vstack(
+        (grid_edges, np.column_stack((Zvec[:-ncol], Zvec[ncol:])))
+    )  # OK
     del Zvec
 
     # Sort each edge to have lowest pixel node first
@@ -5601,7 +5792,9 @@ def uw_interp() -> None:
     sort_edges = np.take_along_axis(grid_edges, I_sort, axis=1)
     edge_sign = I_sort[:, 1] - I_sort[:, 0]  # OK
 
-    alledges, II, JJ = np.unique(sort_edges, axis=0, return_index=True, return_inverse=True)
+    alledges, II, JJ = np.unique(
+        sort_edges, axis=0, return_index=True, return_inverse=True
+    )
     sameix = alledges[:, 0] == alledges[:, 1]
     alledges[sameix, :] = 0  # Set edges connecting identical nodes to (0,0)
 
@@ -5853,7 +6046,9 @@ def stage7_calc_scla(
 
     oldscla = Path(".").glob(f"{sclaname}.mat")
     if len(oldscla) > 0 and oldscla[0].exists():
-        olddatenum = datetime.fromtimestamp(os.path.getmtime(oldscla[0])).strftime("%Y%m%d_%H%M%S")
+        olddatenum = datetime.fromtimestamp(os.path.getmtime(oldscla[0])).strftime(
+            "%Y%m%d_%H%M%S"
+        )
         import shutil
 
         shutil.move(oldscla[0], f"tmp_{sclaname[:-4]}_{olddatenum}.mat")
@@ -5861,7 +6056,9 @@ def stage7_calc_scla(
     stamps_save(sclaname, ph_scla, K_ps_uw, C_ps_uw, ph_ramp, ifg_vcm)
 
 
-def ps_deramp(ps: dotdict, ph_all: Array, degree: Optional[int] = None) -> Tuple[Array, Array]:
+def ps_deramp(
+    ps: dotdict, ph_all: Array, degree: Optional[int] = None
+) -> Tuple[Array, Array]:
     """
     Deramps the data. Deramping is done by fitting a polynomial to the data and
     subtracting it from the original data.
@@ -6006,7 +6203,9 @@ def ps_setref(ps: Optional[dotdict] = None) -> Array:
 
     if len(ref_ps) == 0:
         if ps is not None:
-            log("None of your external data points have a reference, all are set as reference.")
+            log(
+                "None of your external data points have a reference, all are set as reference."
+            )
             ref_ps = np.arange(ps.n_ps)
 
     if ps is None:
@@ -6562,7 +6761,9 @@ def limit_memory(maxmem: int | str) -> None:
 
     # At exit, print out the maximum memory used
 
-    atexit.register(lambda: log(f"Maximum memory used: {human_size(max_memory_used())}"))
+    atexit.register(
+        lambda: log(f"Maximum memory used: {human_size(max_memory_used())}")
+    )
 
 
 def setup_logging(logging_config: Optional[Path] = None) -> None:
@@ -6605,14 +6806,18 @@ def setup_logging(logging_config: Optional[Path] = None) -> None:
             exc_traceback = exc_traceback.tb_next
 
         # Nicely log the exception
-        logging.error(f"{exc_value} ({exc_type.__name__} at line {exc_traceback.tb_lineno})")
+        logging.error(
+            f"{exc_value} ({exc_type.__name__} at line {exc_traceback.tb_lineno})"
+        )
 
     sys.excepthook = excepthook
 
     if logging_config:
         log(f"Using logging configuration file: {logging_config}")
     else:
-        log("Using default logging configuration as no configfile provided using `--logconfig`")
+        log(
+            "Using default logging configuration as no configfile provided using `--logconfig`"
+        )
 
 
 def load_and_normalise_config(
@@ -6630,7 +6835,9 @@ def load_and_normalise_config(
             with open(config, "rb") as f:
                 opts = toml.load(f)
                 if DEBUG and len(opts) > 0:
-                    log(f"Options from config file: {", ".join([k for k in opts.keys()])}")
+                    log(
+                        f"Options from config file: {", ".join([k for k in opts.keys()])}"
+                    )
                     options.update(opts)
 
         except toml.TOMLDecodeError as e:
@@ -6794,14 +7001,20 @@ def cli() -> None:
     global VERBOSE
     global DEBUG
 
-    from argparse import ArgumentTypeError, ArgumentParser, ArgumentDefaultsHelpFormatter
+    from argparse import (
+        ArgumentTypeError,
+        ArgumentParser,
+        ArgumentDefaultsHelpFormatter,
+    )
 
     def parse_stages(s: str) -> list[int]:
         """Parse the stage range argument."""
         min_stage, max_stage = 0, 7
         ss = s.split("-")
         if ss[0] == "":
-            raise ArgumentTypeError("Invalid stage range, it should be of the form 'n' or 'n-m'")
+            raise ArgumentTypeError(
+                "Invalid stage range, it should be of the form 'n' or 'n-m'"
+            )
 
         start = int(ss[0])
         end = int(ss[1]) if len(ss) > 1 else start
@@ -6828,29 +7041,55 @@ def cli() -> None:
     # Global options
 
     parser.add_argument("--nofancy", action="store_true", help="Disable fancy outputs")
-    parser.add_argument("-q", "--quiet", action="store_true", help="Disable verbose outputs")
-    parser.add_argument("--logging", action="store_true", help="Use the `logging` module")
-    parser.add_argument("--logconfig", type=Path, help="Use `logging` configuration file")
-    parser.add_argument("-c", "--config", type=Path, help="Configuration file in .toml format")
-    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug outputs")
+    parser.add_argument(
+        "-q", "--quiet", action="store_true", help="Disable verbose outputs"
+    )
+    parser.add_argument(
+        "--logging", action="store_true", help="Use the `logging` module"
+    )
+    parser.add_argument(
+        "--logconfig", type=Path, help="Use `logging` configuration file"
+    )
+    parser.add_argument(
+        "-c", "--config", type=Path, help="Configuration file in .toml format"
+    )
+    parser.add_argument(
+        "-d", "--debug", action="store_true", help="Enable debug outputs"
+    )
     parser.add_argument("--test", action="store_true", help="Run the tests")
-    parser.add_argument("--check", action="store_true", help="Check against MATLAB outputs")
-    parser.add_argument("--triangle", type=parse_exec, default=TRIANGLE, help="Triangle executable")
-    parser.add_argument("--snaphu", type=parse_exec, default=SNAPHU, help="Snaphu executable")
-    parser.add_argument("--processor", type=str, default="gamma", help="Processor to use")
-    parser.add_argument("--maxmem", type=str, default="-1B", help="Maximum memory usage")
+    parser.add_argument(
+        "--check", action="store_true", help="Check against MATLAB outputs"
+    )
+    parser.add_argument(
+        "--triangle", type=parse_exec, default=TRIANGLE, help="Triangle executable"
+    )
+    parser.add_argument(
+        "--snaphu", type=parse_exec, default=SNAPHU, help="Snaphu executable"
+    )
+    parser.add_argument(
+        "--processor", type=str, default="gamma", help="Processor to use"
+    )
+    parser.add_argument(
+        "--maxmem", type=str, default="-1B", help="Maximum memory usage"
+    )
     parser.add_argument("--params", action="store_true", help="Print all parameters")
     parser.add_argument("run", nargs="*", type=parse_stages, metavar="1 2 3-5")
 
     # Model options
 
-    parser.add_argument("--datadir", type=Path, default=Path(".."), help="Data directory")
+    parser.add_argument(
+        "--datadir", type=Path, default=Path(".."), help="Data directory"
+    )
     parser.add_argument(
         "--master_date", type=str, default="", help="Master date", metavar="YYYYMMDD"
     )
     parser.add_argument("--da_thresh", type=float, default=0.4, help="DA threshold")
-    parser.add_argument("--rg_patches", type=int, default=1, help="Number of range patches")
-    parser.add_argument("--az_patches", type=int, default=1, help="Number of azimuth patches")
+    parser.add_argument(
+        "--rg_patches", type=int, default=1, help="Number of range patches"
+    )
+    parser.add_argument(
+        "--az_patches", type=int, default=1, help="Number of azimuth patches"
+    )
     parser.add_argument("--rg_overlap", type=int, default=50, help="Range overlap")
     parser.add_argument("--az_overlap", type=int, default=50, help="Azimuth overlap")
     parser.add_argument("--maskfile", type=Path, help="Mask file")
