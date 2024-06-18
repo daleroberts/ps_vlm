@@ -873,16 +873,12 @@ class PrepareData:
                 phs = np.empty(nijs, dtype=typestr)
                 print(f"{i:3d}: {fn}", end="")
                 for k, line in enumerate(ij_lines):
-                    try:
-                        n, az, rg = [int(x) - 1 for x in line.strip().split()]
-                        ph = np.array(ifg[az, rg], dtype=typestr)
-                        if np.isnan(np.absolute(ph)):
-                            log(f"NaN at {az} {rg}")
-                        ph.tofile(phfd)
-                        phs[k] = ph[0]
-                    except IndexError:
-                        log("IndexError")
-                        breakpoint()
+                    n, az, rg = [int(x) - 1 for x in line.strip().split()]
+                    ph = np.array(ifg[az, rg], dtype=typestr)
+                    if np.isnan(np.absolute(ph)):
+                        log(f"NaN at {az} {rg}")
+                    ph.tofile(phfd)
+                    phs[k] = ph
                 phs = np.array(phs, dtype=typestr)
                 mean_ph = np.mean(phs)
                 mean_abs_ph = np.mean(np.absolute(phs))
