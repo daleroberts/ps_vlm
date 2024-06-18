@@ -802,10 +802,13 @@ class PrepareData:
         psc_ids = np.loadtxt(ijfn, delimiter=" ", usecols=(0, 1, 2), dtype=int)
 
         lonlat = np.zeros((len(psc_ids), 2), dtype=np.float32)
-        for i, (pscid, y, x) in enumerate(psc_ids):
-            lon_out = lon[y*width+x]
-            lat_out = lat[y*width+x]
-            lonlat[i,:] = [lon_out, lat_out]
+        for i, (pscid, x, y) in enumerate(psc_ids):
+            try:
+                lon_out = lon[y*width+x]
+                lat_out = lat[y*width+x]
+                lonlat[i,:] = [lon_out, lat_out]
+            except IndexError:
+                log(f"IndexError at {x} {y}")
 
         np.savetxt(llfn, lonlat, fmt="%f")
 
