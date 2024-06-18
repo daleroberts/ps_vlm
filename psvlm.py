@@ -875,7 +875,7 @@ class PrepareData:
                 for k, line in enumerate(ij_lines):
                     n, az, rg = [int(x) - 1 for x in line.strip().split()]
                     ph = np.array(ifg[az, rg], dtype=typestr)
-                    if len(ph) == 0:
+                    if ph.size == 0:
                         log(f"Empty at {az} {rg}")
                     if np.isnan(np.absolute(ph)):
                         log(f"NaN at {az} {rg}")
