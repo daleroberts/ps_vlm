@@ -818,6 +818,7 @@ class PrepareData:
             width = int(fd.readline().strip())
             sarhgtfn = Path(fd.readline().strip())
 
+        log(f"Read following parameters from `{demfn.resolve()}`:")
         log(f"{width = }")
         log(f"{sarhgtfn = }")
 
