@@ -331,12 +331,13 @@ class PrepareData:
 
         log("Generating DEM configuration files")
 
+        geopath = self.datadir / "geo"
+
         with open(demfn, "w") as f:
             f.write(f"{self.width}\n")
-            for dem in self.datadir.glob("*dem.rdc"):
+            for dem in geopath.glob("*dem.rdc"):
                 f.write(f"{dem}\n")
 
-        geopath = self.datadir / "geo"
         lonfn = next(geopath.glob("*.lon"), None)
         latfn = next(geopath.glob("*.lat"), None)
 
