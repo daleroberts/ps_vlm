@@ -789,30 +789,24 @@ class PrepareData:
         log(f"{lonfn = }")
         log(f"{latfn = }")
 
-        log(f"Reading longitudes from `{lonfn}`")
-
-        lon = np.fromfile(lonfn, dtype=np.float32)
-
-        log(f"Reading latitudes from `{latfn}`")
-
-        lat = np.fromfile(latfn, dtype=np.float32)
-
         log(f"Reading ij parameters from `{ijfn.resolve()}`")
 
-        psc_ids = np.loadtxt(ijfn, delimiter=" ", usecols=(0, 1, 2), dtype=int)
+        psdata = np.loadtxt(ijfn, delimiter=" ", usecols=(0, 1, 2), dtype=int)
+        nps = psdata.shape[0]
 
-        lonlat = np.zeros((len(psc_ids), 2), dtype=np.float32)
-        for i, (pscid, x, y) in enumerate(psc_ids):
-            try:
-                lon_out = lon[y*width+x]
-                lat_out = lat[y*width+x]
-                lonlat[i,:] = [lon_out, lat_out]
-            except IndexError:
-                log(f"IndexError at {x} {y}")
+        log(f"Extracting lon/lat for {nps} pixels and writing to `{llfn.resolve()}`")
 
-        np.savetxt(llfn, lonlat, fmt="%f")
-
-        log(f"{len(lon_out)} lon/lat pairs written to {llfn}")
+        with (
+            open(llfn, "wb") as outfile,
+            open(lonfn, "rb") as lonfile,
+            open(latfn, "rb") as latfile,
+        ):
+            for i, (pscid, y, x) in enumerate(psdata):
+                offset = y * width + x
+                lon = np.fromfile(lonfile, dtype=np.float32, count=1, offset=offset)
+                lat = np.fromfile(latfile, dtype=np.float32, count=1, offset=offset)
+                outfile.write(np.array([lon, lat], dtype=np.float32).tobytes())
+                show_progress(i, nps)
 
     def extract_heights(self, demfn: Path, ijfn: Path, hgtfn: Path) -> None:
         """Extract the heights of the candidate pixels. This is roughly equivalent
