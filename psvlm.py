@@ -289,7 +289,10 @@ class PrepareData:
         # Generate the differential interferogram configuration files
 
         self.generate_diff_config_files(
-            self.master_date, self.workdir / "calamp.out", self.workdir / "pscphase.in"
+            self.master_date,
+            self.workdir / "calamp.out",
+            self.workdir / "pscphase.in",
+            self.width,
         )
 
     def parse_rsc_file(self, rscfile: Path) -> Tuple[int, int, str]:
@@ -543,7 +546,7 @@ class PrepareData:
             )
 
     def generate_diff_config_files(
-        self, master_date: str, calampfn: Path, pscphasefn: Path
+        self, master_date: str, calampfn: Path, pscphasefn: Path, width: int
     ) -> None:
         """Generate the differential interferogram configuration file. Basically,
         use the calibrated amplitude file to generate the differential interferograms
@@ -552,6 +555,7 @@ class PrepareData:
         log("Generating interferogram configuration files")
 
         with open(calampfn) as fd, open(pscphasefn, "w") as fo:
+            fo.write(f"{width}\n")
             for line in fd:
                 fn = Path(line.strip().split()[0])
                 stem = fn.stem
