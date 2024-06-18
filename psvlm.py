@@ -812,6 +812,8 @@ class PrepareData:
                 outfile.write(np.array([lon, lat], dtype=np.float32).tobytes())
                 show_progress(i, nps)
 
+        log(f"Wrote {i} lon/lat pairs to `{llfn.resolve()}`")
+
     def extract_heights(self, demfn: Path, ijfn: Path, hgtfn: Path) -> None:
         """Extract the heights of the candidate pixels. This is roughly equivalent
         to the `pscdem` program."""
