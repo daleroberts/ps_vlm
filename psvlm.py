@@ -801,7 +801,7 @@ class PrepareData:
         log(f"Extracting lon/lat for {nps} pixels and writing to `{llfn.resolve()}`")
 
         with (
-            open(llfn, "wb") as outfile,
+            open(llfn, "ab") as outfile,
             open(lonfn, "rb") as lonfile,
             open(latfn, "rb") as latfile,
         ):
