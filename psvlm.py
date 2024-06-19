@@ -800,10 +800,12 @@ class PrepareData:
 
         log(f"Extracting lon/lat for {nps} pixels and writing to `{llfn.resolve()}`")
 
+        llfn.unlink(missing_ok=True)
+
         with (
-            open(llfn, "ab") as outfile,
             open(lonfn, "rb") as lonfile,
             open(latfn, "rb") as latfile,
+            open(llfn, "ab") as outfile,
         ):
             for i, (pscid, y, x) in enumerate(psdata):
                 offset = y * width + x
