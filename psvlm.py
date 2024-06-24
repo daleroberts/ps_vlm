@@ -758,11 +758,12 @@ class PrepareData:
 
                 show_progress(az, nlines)
 
-                for rg in rgloc:
-                    if rg_start <= rg <= rg_end:
-                        ijfd.write(f"{pscid} {az + 1} {rg + 1}\n")
-                        dafd.write(f"{np.sqrt(D_sq[rg]):.4f}\n")
-                        pscid += 1
+                with np.errstate(invalid="ignore"): # ignore NaNs
+                    for rg in rgloc:
+                        if rg_start <= rg <= rg_end:
+                            ijfd.write(f"{pscid} {az + 1} {rg + 1}\n")
+                            dafd.write(f"{np.sqrt(D_sq[rg]):.4f}\n")
+                            pscid += 1
 
                 sumamp[mask] = 0
                 D_sq[mask] = 0
@@ -807,7 +808,7 @@ class PrepareData:
 
         with open(llfn, "ab") as outfile:
             for i, (pscid, y, x) in enumerate(psdata):
-                outfile.write(np.array([lon[i], lat[i]], dtype=np.float32).tobytes())
+                outfile.write(np.array([lon[y,x], lat[y,x]], dtype=np.float32).tobytes())
                 show_progress(i, nps)
 
         log(f"Wrote {i} lon/lat pairs to `{llfn.resolve()}`")
