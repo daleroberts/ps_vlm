@@ -758,7 +758,7 @@ class PrepareData:
 
                 show_progress(az, nlines)
 
-                with np.errstate(invalid="ignore"): # ignore NaNs
+                with np.errstate(invalid="ignore"):  # ignore NaNs
                     for rg in rgloc:
                         if rg_start <= rg <= rg_end:
                             ijfd.write(f"{pscid} {az + 1} {rg + 1}\n")
@@ -804,14 +804,29 @@ class PrepareData:
         lat = np.fromfile(latfn, dtype=">f4").reshape((-1, width))
         lon = np.fromfile(lonfn, dtype=">f4").reshape((-1, width))
 
-        log(f"Latitudes range from {lat[lat!=0].min()} to {lat[lat!=0].max()}")
-        log(f"Longitudes range from {lon[lon!=0].min()} to {lon[lon!=0].max()}")
+        lat[lat == 0] = np.nan
+        lon[lon == 0] = np.nan
+
+        if np.count_nonzero(np.isnan(lat)) > 0:
+            log(
+                f"Found {np.count_nonzero(np.isnan(lat))} missing values"
+                "in latitudes, this could be an issue with the DEM data"
+            )
+
+        if np.count_nonzero(np.isnan(lon)) > 0:
+            log(
+                f"Found {np.count_nonzero(np.isnan(lon))} missing values"
+                "in longitudes, this could be an issue with the DEM data"
+            )
+
+        log(f"Latitudes range from {np.nanmin(lat)} to {np.nanmax(lat)}")
+        log(f"Longitudes range from {np.nanmin(lon)} to {np.nanmax(lon)}")
 
         llfn.unlink(missing_ok=True)
 
         with open(llfn, "ab") as outfile:
             for i, (pscid, y, x) in enumerate(psdata):
-                outfile.write(np.array([lon[y,x], lat[y,x]], dtype="<f4").tobytes())
+                outfile.write(np.array([lon[y, x], lat[y, x]], dtype="<f4").tobytes())
                 show_progress(i, nps)
 
         log(f"Wrote {i} lon/lat pairs to `{llfn.resolve()}`")
