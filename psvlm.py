@@ -804,6 +804,9 @@ class PrepareData:
         lat = np.fromfile(latfn, dtype=np.float32).reshape((-1, width))
         lon = np.fromfile(lonfn, dtype=np.float32).reshape((-1, width))
 
+        log(f"Latitudes range from {lat.min()} to {lat.max()}")
+        log(f"Longitudes range from {lon.min()} to {lon.max()}")
+
         llfn.unlink(missing_ok=True)
 
         with open(llfn, "ab") as outfile:
@@ -2404,6 +2407,9 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     mean_az = naz / 2.0 - 0.5
 
     # Processing of the id, azimuth, range data
+
+    log(f"Loading pixel locations from `{ijname.resolve()}`")
+
     with ijname.open("rb") as f:
         ij = np.loadtxt(f, converters=int).astype(np.uint16)
 
@@ -2414,6 +2420,7 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     log(f"Loaded {n_ps} pixel locations from `{ijname.resolve()}`")
 
     # Processing of the longitude and latitude data
+
     with llname.open("rb") as f:
         lonlat = np.fromfile(f, dtype=">f4").reshape((-1, 2)).astype(np.float64)
 
