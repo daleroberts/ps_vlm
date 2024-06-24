@@ -811,7 +811,7 @@ class PrepareData:
 
         with open(llfn, "ab") as outfile:
             for i, (pscid, y, x) in enumerate(psdata):
-                outfile.write(np.array([lon[y,x], lat[y,x]], dtype=">f4").tobytes())
+                outfile.write(np.array([lon[y,x], lat[y,x]], dtype="<f4").tobytes())
                 show_progress(i, nps)
 
         log(f"Wrote {i} lon/lat pairs to `{llfn.resolve()}`")
@@ -2422,14 +2422,14 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     # Processing of the longitude and latitude data
 
     with llname.open("rb") as f:
-        lonlat = np.fromfile(f, dtype=">f4").reshape((-1, 2)).astype(np.float64)
+        lonlat = np.fromfile(f, dtype="<f4").reshape((-1, 2)).astype(np.float64)
 
     log(f"Loaded {lonlat.shape[0]} lon/lat data from `{llname.resolve()}`")
 
     # Processing of the Height data
     if hgtname.exists():
         with hgtname.open("rb") as f:
-            hgt = np.fromfile(f, dtype=np.float64)
+            hgt = np.fromfile(f, dtype="<f4")
 
         log(f"Loaded {hgt.shape[0]} height data from `{hgtname.resolve()}`")
     else:
