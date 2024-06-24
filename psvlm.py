@@ -801,17 +801,17 @@ class PrepareData:
 
         log(f"Extracting lon/lat for {nps} pixels and writing to `{llfn.resolve()}`")
 
-        lat = np.fromfile(latfn, dtype=np.float32).reshape((-1, width))
-        lon = np.fromfile(lonfn, dtype=np.float32).reshape((-1, width))
+        lat = np.fromfile(latfn, dtype=">f4").reshape((-1, width))
+        lon = np.fromfile(lonfn, dtype=">f4").reshape((-1, width))
 
-        log(f"Latitudes range from {lat.min()} to {lat.max()}")
-        log(f"Longitudes range from {lon.min()} to {lon.max()}")
+        log(f"Latitudes range from {lat[lat!=0].min()} to {lat[lat!=0].max()}")
+        log(f"Longitudes range from {lon[lon!=0].min()} to {lon[lon!=0].max()}")
 
         llfn.unlink(missing_ok=True)
 
         with open(llfn, "ab") as outfile:
             for i, (pscid, y, x) in enumerate(psdata):
-                outfile.write(np.array([lon[y,x], lat[y,x]], dtype=np.float32).tobytes())
+                outfile.write(np.array([lon[y,x], lat[y,x]], dtype="<f4").tobytes())
                 show_progress(i, nps)
 
         log(f"Wrote {i} lon/lat pairs to `{llfn.resolve()}`")
