@@ -800,18 +800,14 @@ class PrepareData:
 
         log(f"Extracting lon/lat for {nps} pixels and writing to `{llfn.resolve()}`")
 
+        lat = np.fromfile(latfn, dtype=np.float32).reshape((-1, width))
+        lon = np.fromfile(lonfn, dtype=np.float32).reshape((-1, width))
+
         llfn.unlink(missing_ok=True)
 
-        with (
-            open(lonfn, "rb") as lonfile,
-            open(latfn, "rb") as latfile,
-            open(llfn, "ab") as outfile,
-        ):
+        with open(llfn, "ab") as outfile:
             for i, (pscid, y, x) in enumerate(psdata):
-                offset = y * width + x
-                lon = np.fromfile(lonfile, dtype=np.float32, count=1, offset=offset)
-                lat = np.fromfile(latfile, dtype=np.float32, count=1, offset=offset)
-                outfile.write(np.array([lon, lat], dtype=np.float32).tobytes())
+                outfile.write(np.array([lon[i], lat[i]], dtype=np.float32).tobytes())
                 show_progress(i, nps)
 
         log(f"Wrote {i} lon/lat pairs to `{llfn.resolve()}`")
@@ -1432,6 +1428,197 @@ def llh2local(llh: Array, origin: Array) -> Array:
     return xy
 
 
+def vincenty_direct(
+    lat0: float,
+    lon0: float,
+    distance: float,
+    bearing: float,
+    earth_semi_major_axis: float = 6378137.0,
+    earth_semi_minor_axis: float = 6356752.3141,
+) -> tuple[float, float]:
+    """Calculates the destination point (lat1, lon1) given the start point (lat0, lon0),
+    bearing (in degrees) and distance (in meters) using Vincenty's direct method.
+
+    Vincety's approach is based on the assumption that the Earth is an oblate
+    spheroid, and hence are more accurate than methods that assume
+    a spherical Earth, such as great-circle distance (see `haversine_direct` function).
+    """
+
+    a = earth_semi_major_axis  # Semi-major axis of the Earth (meters)
+    b = earth_semi_minor_axis  # Semi-minor axis of the Earth (meters)
+    f = (a - b) / a  # Flattening of the Earth
+
+    lat0 = np.radians(lat0)
+    lon0 = np.radians(lon0)
+    alpha1 = np.radians(bearing)
+    sin_alpha1 = np.sin(alpha1)
+    cos_alpha1 = np.cos(alpha1)
+
+    tanU1 = (1 - f) * np.tan(lat0)
+    cosU1 = 1 / np.sqrt(1 + tanU1**2)
+    sinU1 = tanU1 * cosU1
+
+    sigma1 = np.arctan2(tanU1, cos_alpha1)
+    sin_alpha = cosU1 * sin_alpha1
+    cos2_alpha = 1 - sin_alpha**2
+    u2 = cos2_alpha * (a**2 - b**2) / (b**2)
+    A = 1 + u2 / 16384 * (4096 + u2 * (-768 + u2 * (320 - 175 * u2)))
+    B = u2 / 1024 * (256 + u2 * (-128 + u2 * (74 - 47 * u2)))
+
+    sigma = distance / (b * A)
+    sigma_p = 2 * np.pi
+
+    # Iterative calculation of sigma
+
+    while np.abs(sigma - sigma_p) > 1e-12:
+        cos2_sigma_m = np.cos(2 * sigma1 + sigma)
+        sin_sigma = np.sin(sigma)
+        cos_sigma = np.cos(sigma)
+        delta_sigma = (
+            B
+            * sin_sigma
+            * (
+                cos2_sigma_m
+                + B
+                / 4
+                * (
+                    cos_sigma * (-1 + 2 * cos2_sigma_m**2)
+                    - B
+                    / 6
+                    * cos2_sigma_m
+                    * (-3 + 4 * sin_sigma**2)
+                    * (-3 + 4 * cos2_sigma_m**2)
+                )
+            )
+        )
+        sigma_p = sigma
+        sigma = distance / (b * A) + delta_sigma
+
+    tmp = sinU1 * sin_sigma - cosU1 * cos_sigma * cos_alpha1
+    lat1 = np.arctan2(
+        sinU1 * cos_sigma + cosU1 * sin_sigma * cos_alpha1,
+        (1 - f) * np.sqrt(sin_alpha**2 + tmp**2),
+    )
+    lambda_ = np.arctan2(
+        sin_sigma * sin_alpha1, cosU1 * cos_sigma - sinU1 * sin_sigma * cos_alpha1
+    )
+    C = f / 16 * cos2_alpha * (4 + f * (4 - 3 * cos2_alpha))
+    L = lambda_ - (1 - C) * f * sin_alpha * (
+        sigma
+        + C * sin_sigma * (cos2_sigma_m + C * cos_sigma * (-1 + 2 * cos2_sigma_m**2))
+    )
+    lon1 = lon0 + L
+
+    lat1 = np.degrees(lat1)
+    lon1 = np.degrees(lon1)
+
+    return lat1, lon1
+
+
+def haversine_direct(
+    lat0: float,
+    lon0: float,
+    distance: float,
+    bearing: float,
+    earth_semi_major_axis: float = 6378137.0,
+    earth_semi_minor_axis: float = 6356752.3141,
+) -> tuple[float, float]:
+    """Calculates the destination point (lat1, lon1) given the start point
+    (lat0, lon0), bearing (in degrees) and distance (in meters) using the Haversine formula.
+
+    The Haversine formula calculates the great-circle distance between two points on a sphere. This
+    is less accurate than Vincenty's formula, but is simpler and faster to compute.
+    """
+
+    # Radius of the Earth (mean radius) in meters
+
+    R = (earth_semi_major_axis + earth_semi_minor_axis) / 2
+
+    lat0 = np.radians(lat0)
+    lon0 = np.radians(lon0)
+    bearing = np.radians(bearing)
+
+    lat1 = np.arcsin(
+        np.sin(lat0) * np.cos(distance / R)
+        + np.cos(lat0) * np.sin(distance / R) * np.cos(bearing)
+    )
+    lon1 = lon0 + np.arctan2(
+        np.sin(bearing) * np.sin(distance / R) * np.cos(lat0),
+        np.cos(distance / R) - np.sin(lat0) * np.sin(lat1),
+    )
+
+    lat1 = np.degrees(lat1)
+    lon1 = np.degrees(lon1)
+
+    return lat1, lon1
+
+
+def calculate_corners_locations(
+    rangle_samples: int,
+    azimuth_lines: int,
+    center_lat: float,
+    center_lon: float,
+    range_pixel_spacing: float,
+    azimuth_pixel_spacing: float,
+    heading: float,
+    incidence_angle: float,
+    method: str = "harversine",
+) -> list[tuple[float, float]]:
+    """Calculates the latitude and longitude of the four corners of a SAR image
+    based on the range and azimuth samples (width and height) of the image, the
+    center latitude and longitude, range and azimuth pixel spacings (in meters),
+    heading (in degrees) and incidence angle (in degrees).
+
+    Calculations can be done using the haversine formula (spherical Earth) or
+    Vincenty's formula (oblate spheroid Earth).
+
+    Returns a list of tuples containing the latitude and longitude of each
+    corner. The order of the corners is top-left, top-right, bottom-left,
+    bottom-right.
+    """
+
+    def calculate_distance(row: int, col: int) -> float:
+        """Calculates the ground range distance for a given row and column."""
+        slant_range = np.sqrt(
+            (col * range_pixel_spacing) ** 2 + (row * azimuth_pixel_spacing) ** 2
+        )
+        ground_range = slant_range * np.sin(np.radians(incidence_angle))
+        assert isinstance(ground_range, float)
+        return ground_range
+
+    # Bearings from the center to each of the four corners
+
+    bearings = [
+        (heading - 45) % 360,  # bearing to the top-left corner
+        (heading + 45) % 360,  # bearing to the top-right corner
+        (heading + 135) % 360,  # bearing to the bottom-left corner
+        (heading - 135) % 360,  # bearing to the bottom-right corner
+    ]
+
+    # Pixel coordinates of the four corners
+
+    pixels = [
+        (0, 0),
+        (0, rangle_samples - 1),
+        (azimuth_lines - 1, 0),
+        (azimuth_lines - 1, rangle_samples - 1),
+    ]
+
+    corners = []
+    for i, (row, col) in enumerate(pixels):
+        distance = calculate_distance(row, col)
+        bearing = bearings[i]
+
+        if method == "vincenty":
+            lat, lon = vincenty_direct(center_lat, center_lon, distance, bearing)
+        else:
+            lat, lon = haversine_direct(center_lat, center_lon, distance, bearing)
+
+        corners.append((lat, lon))
+
+    return corners
+
+
 def gausswin(n: int, alpha: float = 2.5) -> Array[np.float64]:
     """Create a Gaussian window of length `n` with standard deviation `alpha`."""
 
@@ -1861,10 +2048,12 @@ def goldstein_filter(
     ph = np.nan_to_num(ph)
 
     # Compute increments and the number of windows
+
     n_inc = n_win // 4
     n_win_i, n_win_j = (np.ceil(np.array(ph.shape) / n_inc) - 3).astype(int)
 
     # Generate the window function using a vectorized approach
+
     x = np.arange(1, n_win // 2 + 1)
     wind_func = np.pad(x[:, None] + x, ((0, n_win // 2), (0, n_win // 2)), "symmetric")
 
@@ -1879,19 +2068,23 @@ def goldstein_filter(
         return i1, i2, wf
 
     # Loop over each window
+
     for ix1 in range(n_win_i):
         for ix2 in range(n_win_j):
             # Calculate window bounds
+
             i1, i2, wf_i = win_bounds(ix1, n_inc, n_win, ph.shape[0], wind_func)
             j1, j2, wf_j = win_bounds(ix2, n_inc, n_win, ph.shape[1], wind_func)
 
             # Extract the current window and apply FFT
+
             ph_bit = np.zeros((n_win + n_pad, n_win + n_pad))
             ph_bit[: i2 - i1, : j2 - j1] = ph[i1:i2, j1:j2]
-            # NOTE: changed scipy.fft.ifft2 to numpy.fft.ifft2
+
             ph_fft = np.fft.fft2(ph_bit)
 
             # Apply the adaptive filter in the frequency domain
+
             H = ifftshift(
                 convolve2d(fftshift(np.abs(ph_fft)), gauss_kernel, mode="same")
             )
@@ -1901,7 +2094,7 @@ def goldstein_filter(
             ) ** 2
 
             # Inverse FFT and update the output array
-            # NOTE: changed scipy.fft.ifft2 to numpy.fft.ifft2
+
             ph_filt = np.fft.ifft2(ph_fft * H).real[: i2 - i1, : j2 - j1] * (
                 wf_i[:, None] * wf_j
             )
@@ -1920,15 +2113,18 @@ def gradient_filter(
     raise NotImplementedError("This function has not been verified yet.")
 
     # Initialize variables
+
     n_i, n_j = ph.shape
     n_inc = n_win // 4
     n_win_i = -(-n_i // n_inc) - 3  # Ceiling division
     n_win_j = -(-n_j // n_inc) - 3
 
     # Replace NaNs with zeros
+
     ph = np.nan_to_num(ph)
 
     # Initialize output arrays
+
     Hmag = np.full((n_win_i, n_win_j), np.nan)
     ifreq = Hmag.copy()
     jfreq = Hmag.copy()
@@ -1953,9 +2149,11 @@ def gradient_filter(
     for ix1 in range(n_win_i):
         for ix2 in range(n_win_j):
             # Calculate window bounds
+
             i1, i2, j1, j2 = calc_bounds(ix1, ix2, n_inc, n_win, n_i, n_j)
 
             # Extract phase window and apply FFT
+
             ph_bit = ph[i1:i2, j1:j2]
             if np.count_nonzero(ph_bit) < 6:  # Check for enough non-zero points
                 continue
@@ -1964,14 +2162,17 @@ def gradient_filter(
             H = np.abs(ph_fft)
 
             # Find the index of the maximum magnitude
+
             hidx = np.argmax(H)
             Hmag_this = H.flat[hidx] / H.mean()
 
             # Calculate frequencies
+
             hidx1, hidx2 = np.unravel_index(hidx, (n_win, n_win))
             ifreq_val, jfreq_val = calc_freq(hidx1, hidx2, n_win)
 
             # Update output arrays
+
             Hmag[ix1, ix2] = Hmag_this
             ifreq[ix1, ix2] = ifreq_val
             jfreq[ix1, ix2] = jfreq_val
@@ -2001,17 +2202,21 @@ def topofit(
     """
 
     # Ensure cpxphase is a 1D array
+
     cpxphase = cpxphase.flatten()
 
     # Filter out zero phase observations
+
     ix = cpxphase != 0
     cpxphase = cpxphase[ix]
     bperp = bperp[ix]
 
     # Calculate bperp range
+
     bperp_range = np.max(bperp) - np.min(bperp)
 
     # Define trial multipliers for range error search
+
     trial_mult = (
         np.arange(
             -int(np.ceil(8 * n_trial_wraps)),
@@ -2023,31 +2228,38 @@ def topofit(
     # n_trials = len(trial_mult)
 
     # Calculate trial phase and trial phase matrix for fitting
+
     trial_phase = bperp / bperp_range * np.pi / 4
     trial_phase_mat = np.exp(-1j * np.outer(trial_phase, trial_mult))
 
     # Compute phase responses for each trial
+
     phaser = trial_phase_mat * cpxphase[:, None]
     phaser_sum = np.sum(phaser, axis=0)
 
     # Calculate trial coherences and offsets
+
     C_trial = np.angle(phaser_sum)
     coh_trial = np.abs(phaser_sum) / np.sum(np.abs(cpxphase))
 
     # Find the trial with the highest coherence
+
     coh_high_max_ix = np.argmax(coh_trial)
 
     # Estimate range error, phase offset, and coherence
+
     K0 = np.pi / 4 / bperp_range * trial_mult[coh_high_max_ix]
     C0 = C_trial[coh_high_max_ix]
     coh0 = coh_trial[coh_high_max_ix]
 
     # Linearise and solve for residual phase
+
     resphase = cpxphase * np.exp(-1j * (K0 * bperp))
     offset_phase = np.sum(resphase)
     resphase = np.angle(resphase * np.conj(offset_phase))
 
     # Weighted least squares fit for residual phase
+
     weighting = np.abs(cpxphase)
     mopt = np.linalg.lstsq(
         weighting[:, None] * bperp[:, None], weighting * resphase, rcond=None
@@ -2055,6 +2267,7 @@ def topofit(
     K0 += mopt[0]
 
     # Calculate phase residuals
+
     phase_residual = cpxphase * np.exp(-1j * (K0 * bperp))
     mean_phase_residual = np.sum(phase_residual)
     C0 = np.angle(mean_phase_residual)  # Updated static offset
@@ -2081,14 +2294,15 @@ def stage0_preprocess(opts: dotdict = dotdict()) -> None:
     except KeyError:
         raise RuntimeError(f"Processor `{PROCESSOR}` not found")
 
+    # Check if the master date is set and if not, try to find it
+
     if len(opts.master_date) == 0:
         # Find the master date from the intereferogram base files
+
         first_basefile = next((opts.datadir / "diff0").glob("*.base"), None)
         if first_basefile:
             master_date = first_basefile.stem[:8]
-            log(
-                f"Master date automatically set to {master_date} based on data in `{first_basefile.parent}`"
-            )
+            log(f"Master auto set to {master_date} using `{first_basefile.parent}`")
         else:
             raise RuntimeError("Master date not found")
 
@@ -2113,6 +2327,7 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     log("# Stage 1: Load initial data from GAMMA outputs")
 
     # File names assume we are in a PATCH_ directory
+
     assert Path(".").resolve().name.startswith("PATCH_")
 
     phname = Path("./pscands.1.ph")  # phase data
@@ -2125,6 +2340,7 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     pscname = Path("../pscphase.in")  # config with width and diff phase file locataions
 
     # Read master day from rsc file
+
     with rscname.open() as f:
         rslcpar = Path(f.readline().strip())
 
@@ -2133,6 +2349,7 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     log(f"Reading inteferogram dates from `{pscname.resolve()}`")
 
     # Read interferogram dates
+
     with pscname.open() as f:
         f.readline()  # skip first line
         ifgs = sorted([Path(line.strip()) for line in f.readlines()])
