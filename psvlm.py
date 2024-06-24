@@ -811,7 +811,7 @@ class PrepareData:
 
         with open(llfn, "ab") as outfile:
             for i, (pscid, y, x) in enumerate(psdata):
-                outfile.write(np.array([lon[y,x], lat[y,x]], dtype="<f4").tobytes())
+                outfile.write(np.array([lon[y,x], lat[y,x]], dtype=">f4").tobytes())
                 show_progress(i, nps)
 
         log(f"Wrote {i} lon/lat pairs to `{llfn.resolve()}`")
