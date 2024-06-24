@@ -866,6 +866,8 @@ class PrepareData:
             ij_lines = ijfd.readlines()
             nijs = len(ij_lines)
 
+        log(f"Writing phase time series data to file `{phfn.resolve()}`")
+
         with open(phfn, "w") as phfd:
             ifgmm = [np.memmap(f, dtype=typestr, shape=(azs, rgs)) for f in ifgfns]
 
