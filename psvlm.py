@@ -2509,7 +2509,7 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
 
     # Find center longitude and latitude
 
-    ll0 = (np.max(lonlat, axis=0) + np.min(lonlat, axis=0)) / 2
+    ll0 = (np.nanmax(lonlat, axis=0) + np.nanmin(lonlat, axis=0)) / 2
 
     log(f"{ll0 = } (center longitude and latitude in degrees)")
 
