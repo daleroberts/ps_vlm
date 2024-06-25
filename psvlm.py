@@ -2564,8 +2564,7 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
 
     # Rotate coordinates
 
-    xy = xy.T
-    xynew = rotm @ xy
+    xynew = rotm @ xy.T
 
     # Check if rotation improves alignment and apply if it does
 
