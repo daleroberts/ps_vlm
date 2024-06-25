@@ -2857,7 +2857,7 @@ def stage2_estimate_noise(max_iters: int = 1000, opts: dotdict = dotdict()) -> N
 
     # check("grid_ij", grid_ij+1)
 
-    with np.seterr(divide="ignore", invalid="ignore"):
+    with np.errstate(divide="ignore", invalid="ignore"):
         weighting = 1.0 / da
         weighting[~np.isfinite(weighting)] = 0
 
