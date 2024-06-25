@@ -804,19 +804,19 @@ class PrepareData:
         lat = np.fromfile(latfn, dtype=">f4").reshape((-1, width))
         lon = np.fromfile(lonfn, dtype=">f4").reshape((-1, width))
 
-        lat[lat == 0] = np.nan
-        lon[lon == 0] = np.nan
+        #lat[lat == 0] = np.nan
+        #lon[lon == 0] = np.nan
 
-        if np.count_nonzero(np.isnan(lat)) > 0:
+        if np.count_nonzero(lat==0) > 0:
             log(
-                f"Found {np.count_nonzero(np.isnan(lat))} missing values"
-                "in latitudes, this could be an issue with the DEM data"
+                "Found missing values in latitudes, "
+                "this could be an issue with the DEM data or extent"
             )
 
-        if np.count_nonzero(np.isnan(lon)) > 0:
+        if np.count_nonzero(lon==0) > 0:
             log(
-                f"Found {np.count_nonzero(np.isnan(lon))} missing values"
-                "in longitudes, this could be an issue with the DEM data"
+                "Found missing values in longitudes, "
+                "this could be an issue with the DEM data or extent"
             )
 
         log(f"Latitudes range from {np.nanmin(lat)} to {np.nanmax(lat)}")
@@ -2540,10 +2540,10 @@ def stage1_load_data(endian: str = "b", opts: dotdict = dotdict()) -> None:
     # Determine corners based on a small percentage of points
 
     n_pc = int(np.round(n_ps * 0.001))
-    bl = np.mean(sort_x[:n_pc], axis=0)  # bottom left
-    tr = np.mean(sort_x[-n_pc:], axis=0)  # top right
-    br = np.mean(sort_y[:n_pc], axis=0)  # bottom right
-    tl = np.mean(sort_y[-n_pc:], axis=0)  # top left
+    bl = np.nanmean(sort_x[:n_pc], axis=0)  # bottom left
+    tr = np.nanmean(sort_x[-n_pc:], axis=0)  # top right
+    br = np.nanmean(sort_y[:n_pc], axis=0)  # bottom right
+    tl = np.nanmean(sort_y[-n_pc:], axis=0)  # top left
 
     log(f"{bl = }\n{tl = }\n{br = }\n{tr = } (patch corners in meters)")
 
