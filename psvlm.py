@@ -2884,7 +2884,7 @@ def stage2_estimate_noise(max_iters: int = 1000, opts: dotdict = dotdict()) -> N
             ph_grid[grid_ij[i, 0], grid_ij[i, 1], :] = (
                 ph_grid[grid_ij[i, 0], grid_ij[i, 1], :] + ph_weight[i, :]
             )
-            show_progress(i, n_ifg)
+            show_progress(i, n_ps)
 
         log("Filtering/smoothing each interferogram in the grid")
         for i in range(n_ifg):
