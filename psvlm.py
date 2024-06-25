@@ -2863,10 +2863,12 @@ def stage2_estimate_noise(max_iters: int = 1000, opts: dotdict = dotdict()) -> N
 
     gamma_change_save = 0
 
-    log(f"Processing {n_ps} PS candidates")
+    log(f"Processing {n_ps} PS candidates, we will iterate up to {max_iters} times")
 
     for iter in range(1, max_iters + 1):
         log(f"* Iteration {iter}")
+
+        log("Calculating phase grids for each interferogram")
 
         # Initialize phase grids for raw phases, filtered phases, and weighted phases
         ph_grid = np.zeros((n_i, n_j, n_ifg), dtype=np.complex64)
@@ -2875,11 +2877,14 @@ def stage2_estimate_noise(max_iters: int = 1000, opts: dotdict = dotdict()) -> N
         # Calculate weighted phases, adjusting for baseline and applying weights
         ph_weight = ph * np.exp(-1j * bperp_mat * K_ps[:, None]) * weighting[:, None]
 
+        log("Accumulating weighted phases into grid cells")
+
         # Accumulate weighted phases into grid cells
         for i in range(n_ps):
             ph_grid[grid_ij[i, 0], grid_ij[i, 1], :] = (
                 ph_grid[grid_ij[i, 0], grid_ij[i, 1], :] + ph_weight[i, :]
             )
+            show_progress(i, n_ifg)
 
         log("Filtering/smoothing each interferogram in the grid")
         for i in range(n_ifg):
