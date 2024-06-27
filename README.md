@@ -159,7 +159,7 @@ We refer the reader to the `logging` module documentation for more information o
 
 If you use this code in your research, please cite the following:
 
- - ecat record
+ - TBA (Please contact the author for citation information)
 
  - Hooper A; Bekaert D; Spaans K; Arikan M (2012), Recent advances in SAR
    interferometry time series analysis for measuring crustal deformation,
