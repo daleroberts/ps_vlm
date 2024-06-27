@@ -1,8 +1,8 @@
 #!bash
 #PBS -P dg9 -q normal -l walltime=48:00:00,mem=180GB,ncpus=48,jobfs=400GB -l wd
-#PBS -l storage=scratch/dg9+gdata/v10+gdata/dg9+gdata/up71+gdata/fj7
+#PBS -l storage=scratch/dg9+gdata/dg9+gdata/fj7
 set -e
 
 source /g/data/dg9/env
 
-~/aludra/StaMPS/python/stamps.py
+~/ps_vlm/psvlm.py 0-6 --da_thresh 0.1

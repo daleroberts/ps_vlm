@@ -1,15 +1,62 @@
 #!/usr/bin/env bash
-#PBS -P dg9 -q normal -l wd,walltime=4:00:00,mem=10GB,ncpus=1,storage=scratch/dg9+gdata/v10+gdata/dg9+gdata/up71+gdata/fj7
+#PBS -P dg9 -q normal -l wd,walltime=4:00:00,mem=10GB,ncpus=1,storage=scratch/dg9+gdata/dg9+gdata/fj7
+
 source /g/data/dg9/env
 eval $(workflow_params)
+
+set -ex
+
 master=$(ls -1 *.SLC_tab | sort | head -1 | sed -e 's/^\([0-9]\{8\}\).*/\1/')
+
+# Step 0: Copy all the files and generate base_orbit files
+
 mkdir -p ../geo ../rslc ../diff0
 rm -f ../geo/* ../rslc/* ../diff0/*
-cp ${master}.hgt ../geo/${master}_dem.rdc
-dem_coord dem.dem_par ../geo/${master}.lon ../geo/${master}.lat
+
 cp $cwd/*.rslc $cwd/*.rslc.par ../rslc/
 cp $cwd/*.diff ../diff0/
+
 for f in $(ls $cwd/../rslc/*.rslc.par | grep -v ${master}); do
   ff=$(basename $f)
   base_orbit $cwd/../rslc/${master}.rslc.par ${f} $cwd/../diff0/${master}_${ff/.rslc.par/.base};
 done
+
+# Step 1: Generate the LUT for Geocoding. DEM is in WGS84
+
+SLC_PAR="${master}.rslc.par"
+DEM_PAR="dem.dem_par"
+DEM="dem.bil"
+DEM_SEG_PAR="dem_seg.dem_par"
+DEM_SEG="dem_seg.bil"
+LOOKUP_TABLE="dem.${master}.lt"
+
+rm -f $DEM_PAR
+gdalwarp -overwrite -te $(bbox -b 100 ${master}_aoi.geojson) -te_srs "EPSG:${aoi_srs}" $dem dem.tif
+dem_import dem.tif $DEM $DEM_PAR 0 1
+
+gc_map2 $SLC_PAR $DEM_PAR $DEM $DEM_SEG_PAR $DEM_SEG $LOOKUP_TABLE
+
+# Step 2: Create Latitude and Longitude Files in WGS84 Coordinates
+
+LAT_FILE_DEM="dem.lat"
+LON_FILE_DEM="dem.lon"
+DEM_WIDTH=$(awk '$1 == "width:" {print $2}' $DEM_SEG_PAR)
+DEM_HEIGHT=$(awk '$1 == "nlines:" {print $2}' $DEM_SEG_PAR)
+
+dem_coord $DEM_SEG_PAR $LON_FILE_DEM $LAT_FILE_DEM
+
+# Step 3: Geocode the Latitude and Longitude to Radar Coordinates
+
+LAT_FILE_RADAR="../geo/${master}.lat"
+LON_FILE_RADAR="../geo/${master}.lon"
+SLC_WIDTH=$(awk '$1 == "range_samples:" {print $2}' $SLC_PAR)
+SLC_HEIGHT=$(awk '$1 == "azimuth_lines:" {print $2}' $SLC_PAR)
+
+geocode $LOOKUP_TABLE $LAT_FILE_DEM $DEM_WIDTH $LAT_FILE_RADAR $SLC_WIDTH $SLC_HEIGHT 1 0
+geocode $LOOKUP_TABLE $LON_FILE_DEM $DEM_WIDTH $LON_FILE_RADAR $SLC_WIDTH $SLC_HEIGHT 1 0
+
+# Step 4: Geocode the Heights to Radar Coordinates
+
+HGT_FILE_RADAR="../geo/${master}_dem.rdc"
+
+geocode $LOOKUP_TABLE $DEM_SEG $DEM_WIDTH $HGT_FILE_RADAR $SLC_WIDTH $SLC_HEIGHT 1 0

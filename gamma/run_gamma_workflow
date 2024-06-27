@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#PBS -P dg9 -q normal -l wd,walltime=24:00:00,mem=180GB,ncpus=48,storage=scratch/dg9+gdata/v10+gdata/dg9+gdata/up71+gdata/fj7
+#PBS -P dg9 -q normal -l wd,walltime=24:00:00,mem=180GB,ncpus=48,storage=scratch/dg9+gdata/dg9+gdata/fj7
 set -e
 source /g/data/dg9/env
 eval $(workflow_params)
