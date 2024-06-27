@@ -65,19 +65,19 @@ This workflow is designed to use GAMMA as much as possible and only supplement i
 
 This file is a program that sets up the parameters for the workflow. It magically defines the following environment variables that can be used in the bash workflow script (`run_gamma_workflow`):
 
-    - `aoi` - the area of interest in "minX minY maxX maxY" format
-    - `startdate` - the start date of the time series
-    - `enddate` - the end date of the time series
-    - `opodspath` - the path to the Sentinel-1 precise orbit files
-    - `dem` - the path to the DEM file which can be a very large file covering all of Australia (for example)
-    - `passdir` - the pass direction of the Sentinel-1 satellite: `Ascending` or `Descending`
-    - `map_srs` - the map spatial reference system to use
-    - `aoi_srs` - the spatial reference system of the area of interest
-    - `pol` - the polarisation to use: `vv`, `vh`, `hv`, or `hh`
-    - `azlks` - the azimuth looks to use
-    - `rlks` - the range looks to use
-    - `cwd` - the current working directory
-    - `workdir` - the working directory where the outputs will be generated
+ - `aoi` - the area of interest in "minX minY maxX maxY" format
+ - `startdate` - the start date of the time series
+ - `enddate` - the end date of the time series
+ - `opodspath` - the path to the Sentinel-1 precise orbit files
+ - `dem` - the path to the DEM file which can be a very large file covering all of Australia (for example)
+ - `passdir` - the pass direction of the Sentinel-1 satellite: `Ascending` or `Descending`
+ - `map_srs` - the map spatial reference system to use
+ - `aoi_srs` - the spatial reference system of the area of interest
+ - `pol` - the polarisation to use: `vv`, `vh`, `hv`, or `hh`
+ - `azlks` - the azimuth looks to use
+ - `rlks` - the range looks to use
+ - `cwd` - the current working directory
+ - `workdir` - the working directory where the outputs will be generated
 
 This program is intended to be called at the start of the `run_gamma_workflow` script as `eval $(workflow_params)`. This sets up the environment variables for the workflow.
 
@@ -115,16 +115,16 @@ This program quickly finds Sentinel-1 observations in a given time range and opt
 
 The program has the following arguments:
 
-    - `-from` - the start date of the time range
-    - `-to` - the end date of the time range
-    - `-passdir` - the pass direction of the satellite: `Ascending` or `Descending`
-    - `-aoi` - the area of interest in "minX minY maxX maxY" format
-    - `-aoifile` - a file containing the area of interests in "minX minY maxX maxY" format, one per line
-    - `-bbox` - the bounding box of the area of interest in "minX minY maxX maxY" format
-    - `-aoiidx` - the index of the area of interest in the file `aoifile`
-    - `-out` - the output file to write the observation locations to
-    - `-root` - the root directory of the Sentinel-1 data (default is `/g/data/fj7/Copernicus/Sentinel-1/C-SAR/SLC`)
-    - `-workers` - the number of workers to use (default is 10 or $PBS_NCPUS if running on NCI)
+ - `-from` - the start date of the time range
+ - `-to` - the end date of the time range
+ - `-passdir` - the pass direction of the satellite: `Ascending` or `Descending`
+ - `-aoi` - the area of interest in "minX minY maxX maxY" format
+ - `-aoifile` - a file containing the area of interests in "minX minY maxX maxY" format, one per line
+ - `-bbox` - the bounding box of the area of interest in "minX minY maxX maxY" format
+ - `-aoiidx` - the index of the area of interest in the file `aoifile`
+ - `-out` - the output file to write the observation locations to
+ - `-root` - the root directory of the Sentinel-1 data (default is `/g/data/fj7/Copernicus/Sentinel-1/C-SAR/SLC`)
+ - `-workers` - the number of workers to use (default is 10 or `$PBS_NCPUS` if running on NCI)
 
 Note that this program is explicitly designed to be run on the NCI and it will use the PBS job system to run in parallel. The number of workers can be set with the `-workers` argument. If this is not set, it will default to 10 or the number of CPUs available in the PBS job.
 
@@ -132,8 +132,8 @@ Note that this program is explicitly designed to be run on the NCI and it will u
 
 This simple program collects the observations found by `find_obs` and organises them by date. This is useful for the next step in the workflow which is to generate the SLCs, MLIs, and interferograms. The program has the following arguments:
 
-    - `input_obs` - the input file containing the observations
-    - `template` - the template to use to organise the observations by date
+ - `input_obs` - the input file containing the observations
+ - `template` - the template to use to organise the observations by date
 
 ```bash
 collect_obs_by_date input_obs --template "{date}.zip_files"
@@ -144,22 +144,22 @@ This command will generate a number of files in the current directory with the f
 
 This program creates a `SLC_tab` file for a given AOI and a list of S1 zip files.                                              
                                                                                                                             
-  It takes the following arguments:
-      - `srs`: the spatial reference system of the AOI
-      - `aoifn`: the filename of the AOI which will be stored as a GeoJSON, the default is 'aoi.geojson'                           
-      - `aoi`: the bounding box of the AOI in format (minX, minY, maxX, maxY)  
-      - `opods`: the directory with OPOD state vector files                                                                        
-      - `outfn`: the filename of the `SLC_tab` file default is `SLC_tab`                                                   
-      - `polarisation`: the polarisation of the S1 data, default is `vv`
-      - `dtype`: the data type of the S1 data, default is 0                                                                         
-      - `zipfiles`: the list of S1 zip files                           
+It takes the following arguments:
+ - `srs`: the spatial reference system of the AOI
+ - `aoifn`: the filename of the AOI which will be stored as a GeoJSON, the default is 'aoi.geojson'                           
+ - `aoi`: the bounding box of the AOI in format (minX, minY, maxX, maxY)  
+ - `opods`: the directory with OPOD state vector files                                                                        
+ - `outfn`: the filename of the `SLC_tab` file default is `SLC_tab`                                                   
+ - `polarisation`: the polarisation of the S1 data, default is `vv`
+ - `dtype`: the data type of the S1 data, default is 0                                                                         
+ - `zipfiles`: the list of S1 zip files                           
                                                                                                                                   
-  If zipfiles is a single file with the extension `.zip_files` it is assumed to be a text file with a list of S1 zip files. These files are read into the list zipfiles.                                                                                                                                                                                                    
-  It achieves this doing the following steps:
-      - Unzips the S1 zip files but excludes the tiff files       
-      - Creates a GeoJSON file with the AOI          
-      - Creates a GeoJSON file with the burst geometries intersecting with the AOI
-      - Creates a `SLC_tab` file for each zip file with the bursts intersecting with the AOI
+If zipfiles is a single file with the extension `.zip_files` it is assumed to be a text file with a list of S1 zip files. These files are read into the list zipfiles.                                                                                                                                                                                                    
+It achieves this doing the following steps:
+ - Unzips the S1 zip files but excludes the tiff files       
+ - Creates a GeoJSON file with the AOI          
+ - Creates a GeoJSON file with the burst geometries intersecting with the AOI
+ - Creates a `SLC_tab` file for each zip file with the bursts intersecting with the AOI
 
 For example, in the workflow script, you might have the following command:
 ```bash
